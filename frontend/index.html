@@ -1025,23 +1025,42 @@ function updateDeficitChart(deficitData) {
       labels,
       datasets: [
         {
+          label: 'Deficit / Surplus',
+          data: deficitValues,
+          backgroundColor: deficitValues.map(d => d >= 0 ? 'rgba(0, 184, 148, 0.5)' : 'rgba(231, 76, 60, 0.5)'),
+          borderColor: deficitValues.map(d => d >= 0 ? '#00b894' : '#e74c3c'),
+          borderWidth: 1,
+          borderRadius: 4,
+          yAxisID: 'yBar',
+          order: 3,
+        },
+        {
           label: 'TDEE (estimated)',
           data: tdeeValues,
           type: 'line',
           borderColor: '#00b894',
-          backgroundColor: 'rgba(0, 184, 148, 0.1)',
+          backgroundColor: 'rgba(0, 184, 148, 0.08)',
           fill: false,
           tension: 0.3,
           pointRadius: daysWithData.length > 60 ? 0 : 4,
+          pointHoverRadius: 6,
           borderWidth: 2.5,
           borderDash: [6, 3],
+          yAxisID: 'y',
           order: 1,
         },
         {
           label: 'Consumed',
           data: consumedValues,
-          backgroundColor: deficitValues.map(d => d >= 0 ? 'rgba(0, 184, 148, 0.6)' : 'rgba(231, 76, 60, 0.6)'),
-          borderRadius: 4,
+          type: 'line',
+          borderColor: '#f39c12',
+          backgroundColor: 'rgba(243, 156, 18, 0.08)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: daysWithData.length > 60 ? 0 : 4,
+          pointHoverRadius: 6,
+          borderWidth: 2.5,
+          yAxisID: 'y',
           order: 2,
         }
       ]
@@ -1082,8 +1101,19 @@ function updateDeficitChart(deficitData) {
       scales: {
         x: { grid: { display: false } },
         y: {
+          type: 'linear',
+          position: 'left',
           grid: { color: '#2d3040' },
           title: { display: true, text: 'Calories (kcal)', color: '#8b8fa3' }
+        },
+        yBar: {
+          type: 'linear',
+          position: 'right',
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'Deficit / Surplus', color: '#8b8fa3' },
+          ticks: {
+            callback: v => (v >= 0 ? '+' : '') + v
+          }
         }
       }
     }

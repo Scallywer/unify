@@ -64,3 +64,45 @@ def get_all_metrics():
             "SELECT * FROM metrics ORDER BY timestamp DESC"
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+def get_daily_metrics(days: int = 30):
+    """Return daily aggregated metrics for the last N days.
+
+    Aggregation: sum for steps/calories, avg for weight/sleep/HR.
+    Only non-null values contribute to averages.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                date,
+                AVG(weight_kg) AS weight_kg,
+                SUM(calories_kcal) AS calories_kcal,
+                SUM(steps) AS steps,
+                AVG(sleep_hours) AS sleep_hours,
+                AVG(resting_hr_bpm) AS resting_hr_bpm
+            FROM metrics
+            WHERE date >= date('now', :offset)
+            GROUP BY date
+            ORDER BY date ASC
+            """,
+            {"offset": f"-{days} days"},
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_workouts(days: int = 7):
+    """Return recent workout entries."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT date, workout_type, workout_duration_min
+            FROM metrics
+            WHERE workout_type IS NOT NULL
+              AND date >= date('now', :offset)
+            ORDER BY date DESC
+            """,
+            {"offset": f"-{days} days"},
+        ).fetchall()
+        return [dict(row) for row in rows]

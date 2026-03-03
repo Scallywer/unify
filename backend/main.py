@@ -1,9 +1,14 @@
-from fastapi import FastAPI, Request
+import os
+from pathlib import Path
+
+from fastapi import FastAPI, Request, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from models import IngestPayload
-from database import init_db, insert_metric, get_all_metrics
+from database import init_db, insert_metric, get_all_metrics, get_daily_metrics, get_workouts
 
 load_dotenv()
 
@@ -18,11 +23,30 @@ METRIC_MAP = {
     "heartrate": "resting_hr_bpm",
 }
 
+# Resolve frontend directory
+# In Docker: backend files are at /app/, frontend at /app/frontend/
+# In dev: backend/ and frontend/ are siblings under the project root
+_this_dir = Path(__file__).resolve().parent
+FRONTEND_DIR = _this_dir / "frontend" if (_this_dir / "frontend").exists() else _this_dir.parent / "frontend"
+
 
 @app.on_event("startup")
 def startup():
     init_db()
 
+
+# --- Dashboard ---
+
+@app.get("/")
+def serve_dashboard():
+    """Serve the dashboard HTML file."""
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path), media_type="text/html")
+    return {"error": "Dashboard not found. Create frontend/index.html."}
+
+
+# --- Ingest endpoints ---
 
 @app.post("/api/ingest")
 def ingest(payload: IngestPayload):
@@ -58,10 +82,8 @@ async def ingest_health_connect(metric: str, request: Request):
     if metric not in METRIC_MAP:
         return {"status": "error", "message": f"Unknown metric '{metric}'. Use one of: {list(METRIC_MAP.keys())}"}
 
-    # Read the raw body — could be a plain number or JSON
     raw_body = (await request.body()).decode("utf-8").strip()
 
-    # Try to extract a numeric value from whatever the plugin sends
     value = _extract_value(raw_body)
     if value is None:
         return {"status": "error", "message": f"Could not extract a number from body: {raw_body[:200]}"}
@@ -81,7 +103,6 @@ async def ingest_health_connect(metric: str, request: Request):
         "workout_duration_min": None,
     }
 
-    # Cast to int for count-based metrics, float for measurements
     if column in ("steps", "calories_kcal", "resting_hr_bpm"):
         data[column] = int(value)
     else:
@@ -90,6 +111,27 @@ async def ingest_health_connect(metric: str, request: Request):
     insert_metric(data)
     return {"status": "ok", "metric": metric, "value": data[column]}
 
+
+# --- Read endpoints ---
+
+@app.get("/api/data")
+def get_data():
+    return get_all_metrics()
+
+
+@app.get("/api/data/daily")
+def get_data_daily(days: int = Query(default=30, ge=1, le=365)):
+    """Return daily aggregated metrics for the last N days."""
+    return get_daily_metrics(days)
+
+
+@app.get("/api/data/workouts")
+def get_data_workouts(days: int = Query(default=30, ge=1, le=365)):
+    """Return recent workout entries."""
+    return get_workouts(days)
+
+
+# --- Helpers ---
 
 def _extract_value(raw: str):
     """Try to pull a numeric value from the plugin output.
@@ -135,8 +177,3 @@ def _extract_value(raw: str):
         pass
 
     return None
-
-
-@app.get("/api/data")
-def get_data():
-    return get_all_metrics()

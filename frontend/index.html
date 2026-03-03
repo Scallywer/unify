@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Health Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232735;
+    --border: #2d3040;
+    --text: #e4e6ef;
+    --text-dim: #8b8fa3;
+    --accent: #6c5ce7;
+    --green: #00b894;
+    --red: #e74c3c;
+    --orange: #f39c12;
+    --blue: #0984e3;
+    --radius: 12px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .period-selector {
+    display: flex;
+    gap: 4px;
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 4px;
+  }
+
+  .period-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+
+  .period-btn:hover { color: var(--text); background: var(--surface2); }
+  .period-btn.active { background: var(--accent); color: #fff; }
+
+  /* Summary Cards */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-label {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .card-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 6px;
+  }
+
+  .card-sub {
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .card-sub.good { color: var(--green); }
+  .card-sub.bad { color: var(--red); }
+  .card-sub.neutral { color: var(--text-dim); }
+
+  .card-icon {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    font-size: 1.3rem;
+    opacity: 0.5;
+  }
+
+  /* Charts */
+  .chart-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+
+  .chart-section h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--text-dim);
+  }
+
+  .chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 260px;
+  }
+
+  /* Workouts Table */
+  .workouts-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .workouts-table th {
+    text-align: left;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .workouts-table td {
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .workouts-table tr:last-child td { border-bottom: none; }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    background: var(--surface2);
+    color: var(--text-dim);
+  }
+
+  /* Loading */
+  .loading {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+  }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .header h1 { font-size: 1.2rem; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .card { padding: 14px; }
+    .card-value { font-size: 1.4rem; }
+    .chart-wrap { height: 200px; }
+    .period-btn { padding: 6px 10px; font-size: 0.78rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <h1><span>&#127939;</span> Health Dashboard</h1>
+    <div class="period-selector">
+      <button class="period-btn" data-days="7">7d</button>
+      <button class="period-btn active" data-days="14">14d</button>
+      <button class="period-btn" data-days="30">30d</button>
+      <button class="period-btn" data-days="90">90d</button>
+      <button class="period-btn" data-days="365">1y</button>
+    </div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="cards" id="cards">
+    <div class="card">
+      <div class="card-icon">&#9878;</div>
+      <div class="card-label">Weight</div>
+      <div class="card-value" id="card-weight">--</div>
+      <div class="card-sub neutral" id="card-weight-sub">No data</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#127860;</div>
+      <div class="card-label">Calories</div>
+      <div class="card-value" id="card-calories">--</div>
+      <div class="card-sub neutral" id="card-calories-sub">No data</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#128102;</div>
+      <div class="card-label">Steps</div>
+      <div class="card-value" id="card-steps">--</div>
+      <div class="card-sub neutral" id="card-steps-sub">No data</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#128164;</div>
+      <div class="card-label">Sleep</div>
+      <div class="card-value" id="card-sleep">--</div>
+      <div class="card-sub neutral" id="card-sleep-sub">No data</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#10084;</div>
+      <div class="card-label">Heart Rate</div>
+      <div class="card-value" id="card-hr">--</div>
+      <div class="card-sub neutral" id="card-hr-sub">Avg resting</div>
+    </div>
+  </div>
+
+  <!-- Weight Chart -->
+  <div class="chart-section">
+    <h2>Weight Trend</h2>
+    <div class="chart-wrap"><canvas id="weightChart"></canvas></div>
+  </div>
+
+  <!-- Calories + Steps Chart -->
+  <div class="chart-section">
+    <h2>Calories &amp; Steps</h2>
+    <div class="chart-wrap"><canvas id="caloriesStepsChart"></canvas></div>
+  </div>
+
+  <!-- Workouts -->
+  <div class="chart-section">
+    <h2>Recent Workouts</h2>
+    <div id="workouts-container">
+      <div class="empty-state">No workout data yet</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const GOALS = { steps: 10000, sleep: 7, calories: 2000 };
+let currentDays = 14;
+let weightChart = null;
+let caloriesStepsChart = null;
+
+// --- Chart.js defaults ---
+Chart.defaults.color = '#8b8fa3';
+Chart.defaults.borderColor = '#2d3040';
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', () => {
+  loadData(currentDays);
+  document.querySelectorAll('.period-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentDays = parseInt(btn.dataset.days);
+      loadData(currentDays);
+    });
+  });
+});
+
+async function loadData(days) {
+  try {
+    const [dailyRes, workoutsRes] = await Promise.all([
+      fetch(`/api/data/daily?days=${days}`),
+      fetch(`/api/data/workouts?days=${days}`)
+    ]);
+    const daily = await dailyRes.json();
+    const workouts = await workoutsRes.json();
+
+    updateCards(daily);
+    updateWeightChart(daily);
+    updateCaloriesStepsChart(daily);
+    updateWorkouts(workouts);
+  } catch (err) {
+    console.error('Failed to load data:', err);
+  }
+}
+
+// --- Summary Cards ---
+function updateCards(daily) {
+  const today = daily.length > 0 ? daily[daily.length - 1] : null;
+  const yesterday = daily.length > 1 ? daily[daily.length - 2] : null;
+
+  // Weight
+  if (today && today.weight_kg != null) {
+    const w = today.weight_kg;
+    document.getElementById('card-weight').textContent = w.toFixed(1) + ' kg';
+    if (yesterday && yesterday.weight_kg != null) {
+      const delta = w - yesterday.weight_kg;
+      const el = document.getElementById('card-weight-sub');
+      const sign = delta >= 0 ? '+' : '';
+      el.textContent = `${sign}${delta.toFixed(1)} kg from yesterday`;
+      el.className = 'card-sub ' + (delta <= 0 ? 'good' : 'neutral');
+    } else {
+      setSubNeutral('card-weight-sub', 'Latest reading');
+    }
+  } else {
+    document.getElementById('card-weight').textContent = '--';
+    setSubNeutral('card-weight-sub', 'No data');
+  }
+
+  // Calories
+  if (today && today.calories_kcal != null) {
+    const c = today.calories_kcal;
+    document.getElementById('card-calories').textContent = c.toLocaleString();
+    const el = document.getElementById('card-calories-sub');
+    if (c <= GOALS.calories) {
+      el.textContent = `\u2713 Under ${GOALS.calories.toLocaleString()} goal`;
+      el.className = 'card-sub good';
+    } else {
+      el.textContent = `Over ${GOALS.calories.toLocaleString()} goal`;
+      el.className = 'card-sub bad';
+    }
+  } else {
+    document.getElementById('card-calories').textContent = '--';
+    setSubNeutral('card-calories-sub', 'No data');
+  }
+
+  // Steps
+  if (today && today.steps != null) {
+    const s = today.steps;
+    document.getElementById('card-steps').textContent = s.toLocaleString();
+    const el = document.getElementById('card-steps-sub');
+    if (s >= GOALS.steps) {
+      el.textContent = `\u2713 ${GOALS.steps.toLocaleString()} goal reached`;
+      el.className = 'card-sub good';
+    } else {
+      const pct = Math.round((s / GOALS.steps) * 100);
+      el.textContent = `${pct}% of ${GOALS.steps.toLocaleString()} goal`;
+      el.className = 'card-sub neutral';
+    }
+  } else {
+    document.getElementById('card-steps').textContent = '--';
+    setSubNeutral('card-steps-sub', 'No data');
+  }
+
+  // Sleep
+  if (today && today.sleep_hours != null) {
+    const sl = today.sleep_hours;
+    document.getElementById('card-sleep').textContent = sl.toFixed(1) + ' hrs';
+    const el = document.getElementById('card-sleep-sub');
+    if (sl >= GOALS.sleep) {
+      el.textContent = `\u2713 ${GOALS.sleep}h+ goal met`;
+      el.className = 'card-sub good';
+    } else {
+      el.textContent = `Below ${GOALS.sleep}h goal`;
+      el.className = 'card-sub bad';
+    }
+  } else {
+    document.getElementById('card-sleep').textContent = '--';
+    setSubNeutral('card-sleep-sub', 'No data');
+  }
+
+  // Heart Rate
+  if (today && today.resting_hr_bpm != null) {
+    document.getElementById('card-hr').textContent = Math.round(today.resting_hr_bpm) + ' bpm';
+    setSubNeutral('card-hr-sub', 'Avg resting');
+  } else {
+    document.getElementById('card-hr').textContent = '--';
+    setSubNeutral('card-hr-sub', 'No data');
+  }
+}
+
+function setSubNeutral(id, text) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'card-sub neutral';
+}
+
+// --- Weight Chart ---
+function updateWeightChart(daily) {
+  const data = daily.filter(d => d.weight_kg != null);
+  const labels = data.map(d => formatDate(d.date));
+  const values = data.map(d => d.weight_kg);
+
+  if (weightChart) weightChart.destroy();
+
+  const ctx = document.getElementById('weightChart').getContext('2d');
+  weightChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Weight (kg)',
+        data: values,
+        borderColor: '#6c5ce7',
+        backgroundColor: 'rgba(108, 92, 231, 0.1)',
+        fill: true,
+        tension: 0.35,
+        pointRadius: data.length > 60 ? 0 : 4,
+        pointHoverRadius: 6,
+        borderWidth: 2.5,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          grid: { color: '#2d3040' },
+          ticks: { callback: v => v.toFixed(1) }
+        }
+      }
+    }
+  });
+}
+
+// --- Calories + Steps Chart ---
+function updateCaloriesStepsChart(daily) {
+  const labels = daily.map(d => formatDate(d.date));
+  const calories = daily.map(d => d.calories_kcal);
+  const steps = daily.map(d => d.steps);
+
+  if (caloriesStepsChart) caloriesStepsChart.destroy();
+
+  const ctx = document.getElementById('caloriesStepsChart').getContext('2d');
+  caloriesStepsChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Calories (kcal)',
+          data: calories,
+          backgroundColor: 'rgba(243, 156, 18, 0.7)',
+          borderRadius: 4,
+          yAxisID: 'y',
+          order: 2,
+        },
+        {
+          label: 'Steps',
+          data: steps,
+          type: 'line',
+          borderColor: '#0984e3',
+          backgroundColor: 'rgba(9, 132, 227, 0.1)',
+          fill: false,
+          tension: 0.35,
+          pointRadius: daily.length > 60 ? 0 : 3,
+          borderWidth: 2.5,
+          yAxisID: 'y1',
+          order: 1,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { usePointStyle: true, padding: 16 }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          type: 'linear',
+          position: 'left',
+          grid: { color: '#2d3040' },
+          title: { display: true, text: 'Calories', color: '#f39c12' },
+        },
+        y1: {
+          type: 'linear',
+          position: 'right',
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'Steps', color: '#0984e3' },
+        }
+      }
+    }
+  });
+}
+
+// --- Workouts ---
+function updateWorkouts(workouts) {
+  const container = document.getElementById('workouts-container');
+  if (!workouts || workouts.length === 0) {
+    container.innerHTML = '<div class="empty-state">No workout data yet</div>';
+    return;
+  }
+
+  let html = `<table class="workouts-table">
+    <thead><tr><th>Date</th><th>Type</th><th>Duration</th></tr></thead><tbody>`;
+
+  workouts.forEach(w => {
+    const dur = w.workout_duration_min != null ? `${w.workout_duration_min} min` : '--';
+    const type = w.workout_type || 'Unknown';
+    html += `<tr>
+      <td>${formatDate(w.date)}</td>
+      <td><span class="badge">${type}</span></td>
+      <td>${dur}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// --- Helpers ---
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[d.getMonth()]} ${d.getDate()}`;
+}
+</script>
+
+</body>
+</html>

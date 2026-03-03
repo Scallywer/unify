@@ -606,14 +606,15 @@ function updateCards(daily, deficitData) {
       const sign = d >= 0 ? '+' : '';
       document.getElementById('card-deficit').textContent = sign + d.toLocaleString();
       const el = document.getElementById('card-deficit-sub');
+      const detail = `TDEE ${todayDef.tdee} \u2022 ${todayDef.distance_km || 0} km`;
       if (d > 0) {
-        el.textContent = `Deficit \u2022 TDEE ${todayDef.tdee}`;
+        el.textContent = `Deficit \u2022 ${detail}`;
         el.className = 'card-sub good';
       } else if (d < 0) {
-        el.textContent = `Surplus \u2022 TDEE ${todayDef.tdee}`;
+        el.textContent = `Surplus \u2022 ${detail}`;
         el.className = 'card-sub bad';
       } else {
-        el.textContent = `Balanced \u2022 TDEE ${todayDef.tdee}`;
+        el.textContent = `Balanced \u2022 ${detail}`;
         el.className = 'card-sub neutral';
       }
     } else {
@@ -770,6 +771,7 @@ function updateDeficitChart(deficitData) {
   const tdeeValues = daysWithData.map(d => d.tdee);
   const consumedValues = daysWithData.map(d => d.calories_consumed || null);
   const deficitValues = daysWithData.map(d => d.deficit || 0);
+  const breakdowns = daysWithData; // keep full objects for tooltips
 
   if (deficitChart) deficitChart.destroy();
 
@@ -824,9 +826,22 @@ function updateDeficitChart(deficitData) {
           callbacks: {
             afterBody: function(items) {
               const idx = items[0].dataIndex;
+              const d = breakdowns[idx];
               const def = deficitValues[idx];
               const sign = def >= 0 ? '+' : '';
-              return `Balance: ${sign}${def} kcal (${def >= 0 ? 'deficit' : 'surplus'})`;
+              const lines = [
+                ``,
+                `BMR: ${d.bmr || '--'} kcal`,
+                `Walking: ${d.walking_calories || 0} kcal (${d.distance_km || 0} km)`,
+                `TEF: ${d.tef || 0} kcal`,
+                `NEAT: ${d.neat || 0} kcal`,
+                ``,
+                `Balance: ${sign}${def} kcal (${def >= 0 ? 'deficit' : 'surplus'})`,
+              ];
+              if (d.weekly_kg_change != null) {
+                lines.push(`Projected: ${d.weekly_kg_change > 0 ? '-' : '+'}${Math.abs(d.weekly_kg_change)} kg/week`);
+              }
+              return lines;
             }
           }
         }

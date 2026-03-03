@@ -69,8 +69,8 @@ def get_all_metrics():
 def get_daily_metrics(days: int = 30):
     """Return daily aggregated metrics for the last N days.
 
-    Aggregation: sum for steps/calories, avg for weight/sleep/HR.
-    Only non-null values contribute to averages.
+    Aggregation: MAX for steps/calories (Tasker may report multiple times),
+    AVG for weight/sleep/HR. Only non-null values contribute.
     """
     with get_connection() as conn:
         rows = conn.execute(
@@ -78,8 +78,8 @@ def get_daily_metrics(days: int = 30):
             SELECT
                 date,
                 AVG(weight_kg) AS weight_kg,
-                SUM(calories_kcal) AS calories_kcal,
-                SUM(steps) AS steps,
+                MAX(calories_kcal) AS calories_kcal,
+                MAX(steps) AS steps,
                 AVG(sleep_hours) AS sleep_hours,
                 AVG(resting_hr_bpm) AS resting_hr_bpm
             FROM metrics

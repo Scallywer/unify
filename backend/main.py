@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Query
@@ -22,6 +23,25 @@ METRIC_MAP = {
     "sleep": "sleep_hours",
     "heartrate": "resting_hr_bpm",
 }
+
+# Goals config file path (persisted alongside the DB)
+_data_dir = Path(os.getenv("DB_PATH", "./data/health.db")).resolve().parent
+GOALS_FILE = _data_dir / "goals.json"
+DEFAULT_GOALS = {"steps": 10000, "calories": 2000, "sleep": 7}
+
+
+def _load_goals():
+    if GOALS_FILE.exists():
+        try:
+            return json.loads(GOALS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return DEFAULT_GOALS.copy()
+
+
+def _save_goals(goals: dict):
+    GOALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    GOALS_FILE.write_text(json.dumps(goals, indent=2))
 
 # Resolve frontend directory
 # In Docker: backend files are at /app/, frontend at /app/frontend/
@@ -129,6 +149,26 @@ def get_data_daily(days: int = Query(default=30, ge=1, le=365)):
 def get_data_workouts(days: int = Query(default=30, ge=1, le=365)):
     """Return recent workout entries."""
     return get_workouts(days)
+
+
+# --- Goals config ---
+
+@app.get("/api/goals")
+def get_goals():
+    """Return current goal settings."""
+    return _load_goals()
+
+
+@app.post("/api/goals")
+async def set_goals(request: Request):
+    """Update goal settings. Accepts partial updates."""
+    body = await request.json()
+    goals = _load_goals()
+    for key in ("steps", "calories", "sleep"):
+        if key in body:
+            goals[key] = body[key]
+    _save_goals(goals)
+    return {"status": "ok", "goals": goals}
 
 
 # --- Helpers ---

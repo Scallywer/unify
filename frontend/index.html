@@ -198,6 +198,89 @@
     color: var(--text-dim);
   }
 
+  /* Goals Settings */
+  .settings-toggle {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+  }
+
+  .settings-toggle:hover { color: var(--text); border-color: var(--accent); }
+
+  .settings-panel {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+
+  .settings-panel.open { display: block; }
+
+  .settings-panel h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--text-dim);
+  }
+
+  .settings-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .settings-row label {
+    width: 80px;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+
+  .settings-row input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    width: 120px;
+  }
+
+  .settings-row input:focus { outline: none; border-color: var(--accent); }
+
+  .save-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-top: 4px;
+    transition: opacity 0.2s;
+  }
+
+  .save-btn:hover { opacity: 0.85; }
+
+  .save-msg {
+    display: inline-block;
+    margin-left: 12px;
+    font-size: 0.8rem;
+    color: var(--green);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .save-msg.show { opacity: 1; }
+
   /* Responsive */
   @media (max-width: 600px) {
     body { padding: 12px; }
@@ -216,12 +299,36 @@
   <!-- Header -->
   <div class="header">
     <h1><span>&#127939;</span> Health Dashboard</h1>
-    <div class="period-selector">
-      <button class="period-btn" data-days="7">7d</button>
-      <button class="period-btn active" data-days="14">14d</button>
-      <button class="period-btn" data-days="30">30d</button>
-      <button class="period-btn" data-days="90">90d</button>
-      <button class="period-btn" data-days="365">1y</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <div class="period-selector">
+        <button class="period-btn" data-days="7">7d</button>
+        <button class="period-btn active" data-days="14">14d</button>
+        <button class="period-btn" data-days="30">30d</button>
+        <button class="period-btn" data-days="90">90d</button>
+        <button class="period-btn" data-days="365">1y</button>
+      </div>
+      <button class="settings-toggle" id="settingsToggle">&#9881; Goals</button>
+    </div>
+  </div>
+
+  <!-- Goals Settings Panel -->
+  <div class="settings-panel" id="settingsPanel">
+    <h2>Goal Settings</h2>
+    <div class="settings-row">
+      <label>Steps</label>
+      <input type="number" id="goal-steps" min="0" step="500">
+    </div>
+    <div class="settings-row">
+      <label>Calories</label>
+      <input type="number" id="goal-calories" min="0" step="100">
+    </div>
+    <div class="settings-row">
+      <label>Sleep (hrs)</label>
+      <input type="number" id="goal-sleep" min="0" step="0.5">
+    </div>
+    <div>
+      <button class="save-btn" id="saveGoals">Save Goals</button>
+      <span class="save-msg" id="saveMsg">Saved!</span>
     </div>
   </div>
 
@@ -281,7 +388,7 @@
 </div>
 
 <script>
-const GOALS = { steps: 10000, sleep: 7, calories: 2000 };
+let GOALS = { steps: 10000, sleep: 7, calories: 2000 };
 let currentDays = 14;
 let weightChart = null;
 let caloriesStepsChart = null;
@@ -292,8 +399,47 @@ Chart.defaults.borderColor = '#2d3040';
 Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
 // --- Init ---
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  // Load goals from server
+  try {
+    const res = await fetch('/api/goals');
+    const goals = await res.json();
+    GOALS = { ...GOALS, ...goals };
+  } catch (e) { console.warn('Could not load goals, using defaults'); }
+
+  // Populate settings inputs
+  document.getElementById('goal-steps').value = GOALS.steps;
+  document.getElementById('goal-calories').value = GOALS.calories;
+  document.getElementById('goal-sleep').value = GOALS.sleep;
+
+  // Settings toggle
+  document.getElementById('settingsToggle').addEventListener('click', () => {
+    document.getElementById('settingsPanel').classList.toggle('open');
+  });
+
+  // Save goals
+  document.getElementById('saveGoals').addEventListener('click', async () => {
+    const newGoals = {
+      steps: parseInt(document.getElementById('goal-steps').value) || GOALS.steps,
+      calories: parseInt(document.getElementById('goal-calories').value) || GOALS.calories,
+      sleep: parseFloat(document.getElementById('goal-sleep').value) || GOALS.sleep,
+    };
+    try {
+      await fetch('/api/goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newGoals),
+      });
+      GOALS = newGoals;
+      loadData(currentDays);
+      const msg = document.getElementById('saveMsg');
+      msg.classList.add('show');
+      setTimeout(() => msg.classList.remove('show'), 2000);
+    } catch (e) { console.error('Failed to save goals:', e); }
+  });
+
   loadData(currentDays);
+
   document.querySelectorAll('.period-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));

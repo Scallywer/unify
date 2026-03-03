@@ -326,6 +326,26 @@
       <label>Sleep (hrs)</label>
       <input type="number" id="goal-sleep" min="0" step="0.5">
     </div>
+    <h2 style="margin-top:18px;">Profile (for TDEE calculation)</h2>
+    <div class="settings-row">
+      <label>Height (cm)</label>
+      <input type="number" id="profile-height" min="100" max="250" step="1">
+    </div>
+    <div class="settings-row">
+      <label>Age</label>
+      <input type="number" id="profile-age" min="10" max="120" step="1">
+    </div>
+    <div class="settings-row">
+      <label>Sex</label>
+      <select id="profile-sex" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:0.9rem;width:120px;">
+        <option value="male">Male</option>
+        <option value="female">Female</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <label>Target (kg)</label>
+      <input type="number" id="profile-target-weight" min="30" max="300" step="0.5" placeholder="Optional">
+    </div>
     <div>
       <button class="save-btn" id="saveGoals">Save Goals</button>
       <span class="save-msg" id="saveMsg">Saved!</span>
@@ -364,6 +384,12 @@
       <div class="card-value" id="card-hr">--</div>
       <div class="card-sub neutral" id="card-hr-sub">Avg resting</div>
     </div>
+    <div class="card">
+      <div class="card-icon">&#9878;</div>
+      <div class="card-label">Calorie Balance</div>
+      <div class="card-value" id="card-deficit">--</div>
+      <div class="card-sub neutral" id="card-deficit-sub">No data</div>
+    </div>
   </div>
 
   <!-- Weight Chart -->
@@ -378,6 +404,13 @@
     <div class="chart-wrap"><canvas id="caloriesStepsChart"></canvas></div>
   </div>
 
+  <!-- TDEE vs Consumed -->
+  <div class="chart-section">
+    <h2>TDEE vs Calories Consumed</h2>
+    <div id="deficit-goal-banner" style="display:none; margin-bottom:14px; padding:12px 16px; border-radius:8px; background:var(--surface2); font-size:0.9rem; line-height:1.5;"></div>
+    <div class="chart-wrap"><canvas id="deficitChart"></canvas></div>
+  </div>
+
   <!-- Workouts -->
   <div class="chart-section">
     <h2>Recent Workouts</h2>
@@ -388,10 +421,11 @@
 </div>
 
 <script>
-let GOALS = { steps: 10000, sleep: 7, calories: 2000 };
+let GOALS = { steps: 10000, sleep: 7, calories: 2000, height_cm: 175, age: 30, sex: 'male', target_weight_kg: null };
 let currentDays = 14;
 let weightChart = null;
 let caloriesStepsChart = null;
+let deficitChart = null;
 
 // --- Chart.js defaults ---
 Chart.defaults.color = '#8b8fa3';
@@ -411,6 +445,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('goal-steps').value = GOALS.steps;
   document.getElementById('goal-calories').value = GOALS.calories;
   document.getElementById('goal-sleep').value = GOALS.sleep;
+  document.getElementById('profile-height').value = GOALS.height_cm || 175;
+  document.getElementById('profile-age').value = GOALS.age || 30;
+  document.getElementById('profile-sex').value = GOALS.sex || 'male';
+  document.getElementById('profile-target-weight').value = GOALS.target_weight_kg || '';
 
   // Settings toggle
   document.getElementById('settingsToggle').addEventListener('click', () => {
@@ -419,10 +457,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Save goals
   document.getElementById('saveGoals').addEventListener('click', async () => {
+    const twVal = document.getElementById('profile-target-weight').value;
     const newGoals = {
       steps: parseInt(document.getElementById('goal-steps').value) || GOALS.steps,
       calories: parseInt(document.getElementById('goal-calories').value) || GOALS.calories,
       sleep: parseFloat(document.getElementById('goal-sleep').value) || GOALS.sleep,
+      height_cm: parseInt(document.getElementById('profile-height').value) || GOALS.height_cm,
+      age: parseInt(document.getElementById('profile-age').value) || GOALS.age,
+      sex: document.getElementById('profile-sex').value || GOALS.sex,
+      target_weight_kg: twVal ? parseFloat(twVal) : null,
     };
     try {
       await fetch('/api/goals', {
@@ -452,16 +495,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadData(days) {
   try {
-    const [dailyRes, workoutsRes] = await Promise.all([
+    const [dailyRes, workoutsRes, deficitRes] = await Promise.all([
       fetch(`/api/data/daily?days=${days}`),
-      fetch(`/api/data/workouts?days=${days}`)
+      fetch(`/api/data/workouts?days=${days}`),
+      fetch(`/api/data/deficit?days=${days}`)
     ]);
     const daily = await dailyRes.json();
     const workouts = await workoutsRes.json();
+    const deficitData = await deficitRes.json();
 
-    updateCards(daily);
+    updateCards(daily, deficitData);
     updateWeightChart(daily);
     updateCaloriesStepsChart(daily);
+    updateDeficitChart(deficitData);
     updateWorkouts(workouts);
   } catch (err) {
     console.error('Failed to load data:', err);
@@ -469,7 +515,7 @@ async function loadData(days) {
 }
 
 // --- Summary Cards ---
-function updateCards(daily) {
+function updateCards(daily, deficitData) {
   const today = daily.length > 0 ? daily[daily.length - 1] : null;
   const yesterday = daily.length > 1 ? daily[daily.length - 2] : null;
 
@@ -550,6 +596,33 @@ function updateCards(daily) {
   } else {
     document.getElementById('card-hr').textContent = '--';
     setSubNeutral('card-hr-sub', 'No data');
+  }
+
+  // Calorie Balance (deficit/surplus)
+  if (deficitData && deficitData.daily && deficitData.daily.length > 0) {
+    const todayDef = deficitData.daily[deficitData.daily.length - 1];
+    if (todayDef.deficit != null) {
+      const d = todayDef.deficit;
+      const sign = d >= 0 ? '+' : '';
+      document.getElementById('card-deficit').textContent = sign + d.toLocaleString();
+      const el = document.getElementById('card-deficit-sub');
+      if (d > 0) {
+        el.textContent = `Deficit \u2022 TDEE ${todayDef.tdee}`;
+        el.className = 'card-sub good';
+      } else if (d < 0) {
+        el.textContent = `Surplus \u2022 TDEE ${todayDef.tdee}`;
+        el.className = 'card-sub bad';
+      } else {
+        el.textContent = `Balanced \u2022 TDEE ${todayDef.tdee}`;
+        el.className = 'card-sub neutral';
+      }
+    } else {
+      document.getElementById('card-deficit').textContent = '--';
+      setSubNeutral('card-deficit-sub', 'Need weight + calories');
+    }
+  } else {
+    document.getElementById('card-deficit').textContent = '--';
+    setSubNeutral('card-deficit-sub', 'Set profile in Goals');
   }
 }
 
@@ -659,6 +732,110 @@ function updateCaloriesStepsChart(daily) {
           position: 'right',
           grid: { drawOnChartArea: false },
           title: { display: true, text: 'Steps', color: '#0984e3' },
+        }
+      }
+    }
+  });
+}
+
+// --- TDEE vs Consumed Chart ---
+function updateDeficitChart(deficitData) {
+  const daily = deficitData.daily || [];
+  const summary = deficitData.summary || {};
+
+  // Goal banner
+  const banner = document.getElementById('deficit-goal-banner');
+  if (summary.estimated_weeks != null && summary.estimated_weeks > 0) {
+    const weeks = summary.estimated_weeks;
+    const target = summary.target_weight_kg;
+    const curr = summary.current_weight_kg;
+    const wkly = Math.abs(summary.avg_weekly_kg_change);
+    banner.style.display = 'block';
+    banner.innerHTML = `<span style="color:var(--green);">\u25CF</span> Avg deficit: <strong>${summary.avg_deficit} kcal/day</strong> &nbsp;\u2022&nbsp; ~${wkly} kg/week &nbsp;\u2022&nbsp; <strong>~${weeks} weeks</strong> to reach ${target} kg <span style="color:var(--text-dim);">(from ${curr} kg)</span>`;
+  } else if (summary.message) {
+    banner.style.display = 'block';
+    banner.innerHTML = `<span style="color:var(--orange);">\u25CF</span> ${summary.message}`;
+  } else if (summary.avg_deficit != null) {
+    const wkly = Math.abs(summary.avg_weekly_kg_change);
+    const direction = summary.avg_deficit > 0 ? 'deficit' : 'surplus';
+    banner.style.display = 'block';
+    banner.innerHTML = `<span style="color:${summary.avg_deficit > 0 ? 'var(--green)' : 'var(--red)'};">\u25CF</span> Avg ${direction}: <strong>${Math.abs(summary.avg_deficit)} kcal/day</strong> &nbsp;\u2022&nbsp; ~${wkly} kg/week`;
+  } else {
+    banner.style.display = 'none';
+  }
+
+  // Chart data
+  const daysWithData = daily.filter(d => d.tdee != null);
+  const labels = daysWithData.map(d => formatDate(d.date));
+  const tdeeValues = daysWithData.map(d => d.tdee);
+  const consumedValues = daysWithData.map(d => d.calories_consumed || null);
+  const deficitValues = daysWithData.map(d => d.deficit || 0);
+
+  if (deficitChart) deficitChart.destroy();
+
+  if (daysWithData.length === 0) {
+    const ctx = document.getElementById('deficitChart').getContext('2d');
+    deficitChart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels: ['No data'], datasets: [{ data: [0] }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+    return;
+  }
+
+  const ctx = document.getElementById('deficitChart').getContext('2d');
+  deficitChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'TDEE (estimated)',
+          data: tdeeValues,
+          type: 'line',
+          borderColor: '#00b894',
+          backgroundColor: 'rgba(0, 184, 148, 0.1)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: daysWithData.length > 60 ? 0 : 4,
+          borderWidth: 2.5,
+          borderDash: [6, 3],
+          order: 1,
+        },
+        {
+          label: 'Consumed',
+          data: consumedValues,
+          backgroundColor: deficitValues.map(d => d >= 0 ? 'rgba(0, 184, 148, 0.6)' : 'rgba(231, 76, 60, 0.6)'),
+          borderRadius: 4,
+          order: 2,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { usePointStyle: true, padding: 16 }
+        },
+        tooltip: {
+          callbacks: {
+            afterBody: function(items) {
+              const idx = items[0].dataIndex;
+              const def = deficitValues[idx];
+              const sign = def >= 0 ? '+' : '';
+              return `Balance: ${sign}${def} kcal (${def >= 0 ? 'deficit' : 'surplus'})`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          grid: { color: '#2d3040' },
+          title: { display: true, text: 'Calories (kcal)', color: '#8b8fa3' }
         }
       }
     }

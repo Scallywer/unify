@@ -27,7 +27,15 @@ METRIC_MAP = {
 # Goals config file path (persisted alongside the DB)
 _data_dir = Path(os.getenv("DB_PATH", "./data/health.db")).resolve().parent
 GOALS_FILE = _data_dir / "goals.json"
-DEFAULT_GOALS = {"steps": 10000, "calories": 2000, "sleep": 7}
+DEFAULT_GOALS = {
+    "steps": 10000,
+    "calories": 2000,
+    "sleep": 7,
+    "height_cm": 175,
+    "age": 30,
+    "sex": "male",
+    "target_weight_kg": None,
+}
 
 
 def _load_goals():
@@ -164,11 +172,127 @@ async def set_goals(request: Request):
     """Update goal settings. Accepts partial updates."""
     body = await request.json()
     goals = _load_goals()
-    for key in ("steps", "calories", "sleep"):
+    for key in ("steps", "calories", "sleep", "height_cm", "age", "sex", "target_weight_kg"):
         if key in body:
             goals[key] = body[key]
     _save_goals(goals)
     return {"status": "ok", "goals": goals}
+
+
+# --- Deficit calculator ---
+
+def _calc_bmr(weight_kg: float, height_cm: float, age: int, sex: str) -> float:
+    """Mifflin-St Jeor BMR equation."""
+    bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age
+    if sex == "female":
+        bmr -= 161
+    else:
+        bmr += 5
+    return bmr
+
+
+def _activity_multiplier(steps: int) -> tuple:
+    """Map daily step count to activity level and multiplier."""
+    if steps < 5000:
+        return ("Sedentary", 1.2)
+    elif steps < 7500:
+        return ("Lightly active", 1.375)
+    elif steps < 10000:
+        return ("Moderately active", 1.55)
+    elif steps < 12500:
+        return ("Very active", 1.725)
+    else:
+        return ("Extra active", 1.9)
+
+
+@app.get("/api/data/deficit")
+def get_deficit(days: int = Query(default=30, ge=1, le=365)):
+    """Calculate TDEE and calorie deficit/surplus for each day.
+
+    Uses Mifflin-St Jeor BMR + step-based activity multiplier.
+    Returns per-day breakdown and a summary with averages.
+    """
+    goals = _load_goals()
+    height_cm = goals.get("height_cm", 175)
+    age = goals.get("age", 30)
+    sex = goals.get("sex", "male")
+    target_weight_kg = goals.get("target_weight_kg")
+
+    daily = get_daily_metrics(days)
+
+    daily_breakdown = []
+    deficits = []
+
+    for day in daily:
+        entry = {"date": day["date"]}
+        weight = day.get("weight_kg")
+        steps = day.get("steps")
+        calories = day.get("calories_kcal")
+
+        if weight is not None:
+            bmr = _calc_bmr(weight, height_cm, age, sex)
+            entry["bmr"] = round(bmr)
+
+            if steps is not None:
+                level, mult = _activity_multiplier(steps)
+                tdee = bmr * mult
+                entry["activity_level"] = level
+                entry["activity_multiplier"] = mult
+                entry["tdee"] = round(tdee)
+
+                if calories is not None:
+                    deficit = tdee - calories
+                    entry["calories_consumed"] = calories
+                    entry["deficit"] = round(deficit)
+                    entry["weekly_kg_change"] = round(deficit * 7 / 7700, 2)
+                    deficits.append(deficit)
+            elif calories is not None:
+                # No steps — use sedentary as fallback
+                tdee = bmr * 1.2
+                entry["activity_level"] = "Sedentary (default)"
+                entry["activity_multiplier"] = 1.2
+                entry["tdee"] = round(tdee)
+                deficit = tdee - calories
+                entry["calories_consumed"] = calories
+                entry["deficit"] = round(deficit)
+                entry["weekly_kg_change"] = round(deficit * 7 / 7700, 2)
+                deficits.append(deficit)
+
+        daily_breakdown.append(entry)
+
+    # Summary
+    summary = {}
+    if deficits:
+        avg_deficit = sum(deficits) / len(deficits)
+        summary["avg_deficit"] = round(avg_deficit)
+        summary["avg_weekly_kg_change"] = round(avg_deficit * 7 / 7700, 2)
+
+        # Time to target
+        if target_weight_kg is not None:
+            # Use latest weight
+            latest_weight = None
+            for day in reversed(daily):
+                if day.get("weight_kg") is not None:
+                    latest_weight = day["weight_kg"]
+                    break
+
+            if latest_weight is not None:
+                kg_to_lose = latest_weight - target_weight_kg
+                summary["current_weight_kg"] = round(latest_weight, 1)
+                summary["target_weight_kg"] = target_weight_kg
+                summary["kg_to_lose"] = round(kg_to_lose, 1)
+
+                weekly_change = avg_deficit * 7 / 7700
+                if weekly_change > 0 and kg_to_lose > 0:
+                    weeks = kg_to_lose / weekly_change
+                    summary["estimated_weeks"] = round(weeks, 1)
+                elif kg_to_lose <= 0:
+                    summary["estimated_weeks"] = 0
+                    summary["message"] = "Target already reached!"
+                else:
+                    summary["message"] = "Currently in surplus — reduce calories or increase activity"
+
+    return {"summary": summary, "daily": daily_breakdown}
 
 
 # --- Helpers ---

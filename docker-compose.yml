@@ -1,0 +1,10 @@
+services:
+  health-dashboard:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/health.db
+    restart: unless-stopped

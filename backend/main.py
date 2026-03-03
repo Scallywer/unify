@@ -92,7 +92,11 @@ async def ingest_health_connect(metric: str, request: Request):
 
 
 def _extract_value(raw: str):
-    """Try to pull a numeric value from the plugin output."""
+    """Try to pull a numeric value from the plugin output.
+
+    Handles TaskerHealthConnect format:
+    {"dataOrigins":[...],"doubleValues":{},"longValues":{"Steps_count_total":4994}}
+    """
     import json
 
     # Case 1: plain number (e.g. "5660" or "85.4")
@@ -101,33 +105,31 @@ def _extract_value(raw: str):
     except ValueError:
         pass
 
-    # Case 2: JSON — try to find a numeric value
+    # Case 2: JSON
     try:
         parsed = json.loads(raw)
 
-        # If it's just a number wrapped in JSON
         if isinstance(parsed, (int, float)):
             return float(parsed)
 
-        # If it's a dict, look for common value fields
         if isinstance(parsed, dict):
+            # TaskerHealthConnect format: longValues / doubleValues
+            for values_key in ("longValues", "doubleValues"):
+                if values_key in parsed and isinstance(parsed[values_key], dict):
+                    vals = parsed[values_key]
+                    nums = [v for v in vals.values() if isinstance(v, (int, float))]
+                    if nums:
+                        return float(nums[0])
+
+            # Fallback: common value fields
             for key in ("value", "result", "count", "total", "avg"):
                 if key in parsed and isinstance(parsed[key], (int, float)):
                     return float(parsed[key])
-            # If there's only one numeric value in the dict, use it
+
+            # Fallback: single numeric value in dict
             nums = [v for v in parsed.values() if isinstance(v, (int, float))]
             if len(nums) == 1:
                 return nums[0]
-
-        # If it's a list with one element
-        if isinstance(parsed, list) and len(parsed) == 1:
-            item = parsed[0]
-            if isinstance(item, (int, float)):
-                return float(item)
-            if isinstance(item, dict):
-                for key in ("value", "result", "count", "total", "avg"):
-                    if key in item and isinstance(item[key], (int, float)):
-                        return float(item[key])
 
     except (json.JSONDecodeError, TypeError):
         pass

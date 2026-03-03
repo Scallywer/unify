@@ -2,7 +2,7 @@ import os
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -177,6 +177,201 @@ async def set_goals(request: Request):
             goals[key] = body[key]
     _save_goals(goals)
     return {"status": "ok", "goals": goals}
+
+
+# --- Health Connect DB Import ---
+
+IMPORT_TIMESTAMP_MARKER = "T12:00:00+00:00"
+
+
+@app.post("/api/import/health-connect")
+async def import_health_connect_db(file: UploadFile = File(...)):
+    """Upload a Health Connect export .db file and import its data.
+
+    Deduplication: any previously imported rows (identified by the
+    T12:00:00+00:00 timestamp marker) are replaced on re-import.
+    Tasker-generated rows (with real timestamps) are never touched.
+    """
+    import sqlite3
+    import tempfile
+    from datetime import date as dt_date, timedelta
+
+    # Save uploaded file to a temp location
+    contents = await file.read()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    tmp.write(contents)
+    tmp.close()
+    tmp_path = tmp.name
+
+    try:
+        hc = sqlite3.connect(f"file:{tmp_path}?mode=ro", uri=True)
+
+        # Verify it looks like a Health Connect export
+        tables = [r[0] for r in hc.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()]
+
+        expected = {"steps_record_table", "weight_record_table",
+                    "nutrition_record_table"}
+        if not expected & set(tables):
+            hc.close()
+            os.unlink(tmp_path)
+            return {"status": "error",
+                    "message": f"Not a Health Connect export. Found tables: {tables}"}
+
+        def epoch_days_to_date(days: int) -> str:
+            return (dt_date(1970, 1, 1) + timedelta(days=days)).isoformat()
+
+        # ── Aggregate from HC export ─────────────────────────────────
+        data_by_day: dict[str, dict] = {}
+
+        def ensure_day(d: str):
+            if d not in data_by_day:
+                data_by_day[d] = {}
+
+        # Steps
+        if "steps_record_table" in tables:
+            for row in hc.execute(
+                "SELECT local_date, SUM(count) FROM steps_record_table GROUP BY local_date"
+            ):
+                d = epoch_days_to_date(row[0])
+                ensure_day(d)
+                data_by_day[d]["steps"] = int(row[1])
+
+        # Weight (grams -> kg)
+        if "weight_record_table" in tables:
+            for row in hc.execute(
+                "SELECT local_date, AVG(weight) FROM weight_record_table GROUP BY local_date"
+            ):
+                d = epoch_days_to_date(row[0])
+                ensure_day(d)
+                data_by_day[d]["weight_kg"] = round(row[1] / 1000.0, 2)
+
+        # Calories (cal -> kcal)
+        if "nutrition_record_table" in tables:
+            for row in hc.execute(
+                "SELECT local_date, SUM(energy) FROM nutrition_record_table "
+                "WHERE energy IS NOT NULL GROUP BY local_date"
+            ):
+                d = epoch_days_to_date(row[0])
+                kcal = int(round(row[1] / 1000.0))
+                if kcal > 0:
+                    ensure_day(d)
+                    data_by_day[d]["calories_kcal"] = kcal
+
+        # Sleep (ms -> hours)
+        if "sleep_session_record_table" in tables:
+            for row in hc.execute(
+                "SELECT local_date, SUM(end_time - start_time) "
+                "FROM sleep_session_record_table GROUP BY local_date"
+            ):
+                d = epoch_days_to_date(row[0])
+                hours = round(row[1] / 3_600_000, 2)
+                if hours > 0:
+                    ensure_day(d)
+                    data_by_day[d]["sleep_hours"] = hours
+
+        # Heart rate (min bpm per day)
+        if "heart_rate_record_series_table" in tables and "heart_rate_record_table" in tables:
+            for row in hc.execute(
+                "SELECT r.local_date, MIN(s.beats_per_minute) "
+                "FROM heart_rate_record_series_table s "
+                "JOIN heart_rate_record_table r ON s.parent_key = r.row_id "
+                "WHERE s.beats_per_minute > 30 AND s.beats_per_minute < 220 "
+                "GROUP BY r.local_date"
+            ):
+                d = epoch_days_to_date(row[0])
+                ensure_day(d)
+                data_by_day[d]["resting_hr_bpm"] = int(row[1])
+
+        hc.close()
+
+        if not data_by_day:
+            os.unlink(tmp_path)
+            return {"status": "ok", "message": "No data found in export",
+                    "imported": 0, "replaced": 0}
+
+        # ── Write to backend DB ──────────────────────────────────────
+        from database import get_connection
+
+        with get_connection() as conn:
+            # Find which import dates already exist (by marker timestamp)
+            all_dates = sorted(data_by_day.keys())
+            placeholders = ",".join("?" for _ in all_dates)
+            marker_timestamps = [f"{d}{IMPORT_TIMESTAMP_MARKER}" for d in all_dates]
+
+            existing_import = set(
+                row[0] for row in conn.execute(
+                    f"SELECT DISTINCT date FROM metrics "
+                    f"WHERE timestamp IN ({','.join('?' for _ in marker_timestamps)})",
+                    marker_timestamps,
+                ).fetchall()
+            )
+
+            # Delete old import rows for dates we're about to re-import
+            replaced = 0
+            if existing_import:
+                del_markers = [f"{d}{IMPORT_TIMESTAMP_MARKER}" for d in existing_import]
+                del_placeholders = ",".join("?" for _ in del_markers)
+                cursor = conn.execute(
+                    f"DELETE FROM metrics WHERE timestamp IN ({del_placeholders})",
+                    del_markers,
+                )
+                replaced = cursor.rowcount
+
+            # Insert fresh rows
+            imported = 0
+            for d in all_dates:
+                day = data_by_day[d]
+                if not day:
+                    continue
+                conn.execute(
+                    """INSERT INTO metrics
+                       (timestamp, date, weight_kg, calories_kcal, steps,
+                        sleep_hours, resting_hr_bpm, workout_type, workout_duration_min)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
+                    (
+                        f"{d}{IMPORT_TIMESTAMP_MARKER}",
+                        d,
+                        day.get("weight_kg"),
+                        day.get("calories_kcal"),
+                        day.get("steps"),
+                        day.get("sleep_hours"),
+                        day.get("resting_hr_bpm"),
+                    ),
+                )
+                imported += 1
+
+            conn.commit()
+
+        os.unlink(tmp_path)
+
+        return {
+            "status": "ok",
+            "imported": imported,
+            "replaced": replaced,
+            "date_range": [all_dates[0], all_dates[-1]] if all_dates else None,
+            "metrics": {
+                "steps": sum(1 for d in data_by_day.values() if "steps" in d),
+                "weight": sum(1 for d in data_by_day.values() if "weight_kg" in d),
+                "calories": sum(1 for d in data_by_day.values() if "calories_kcal" in d),
+                "sleep": sum(1 for d in data_by_day.values() if "sleep_hours" in d),
+                "heart_rate": sum(1 for d in data_by_day.values() if "resting_hr_bpm" in d),
+            },
+        }
+
+    except sqlite3.Error as e:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return {"status": "error", "message": f"Database error: {str(e)}"}
+    except Exception as e:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return {"status": "error", "message": f"Import failed: {str(e)}"}
 
 
 # --- Deficit calculator ---

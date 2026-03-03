@@ -281,6 +281,117 @@
 
   .save-msg.show { opacity: 1; }
 
+  /* Import Modal */
+  .import-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .import-overlay.open { display: flex; }
+
+  .import-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    width: 90%;
+    max-width: 460px;
+    position: relative;
+  }
+
+  .import-modal h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .import-modal p {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-bottom: 18px;
+    line-height: 1.5;
+  }
+
+  .import-close {
+    position: absolute;
+    top: 16px;
+    right: 18px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.3rem;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .import-close:hover { color: var(--text); }
+
+  .import-dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 36px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 16px;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+  }
+
+  .import-dropzone:hover,
+  .import-dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(108, 92, 231, 0.06);
+    color: var(--text);
+  }
+
+  .import-dropzone .icon { font-size: 2rem; margin-bottom: 8px; display: block; }
+
+  .import-dropzone input[type="file"] { display: none; }
+
+  .import-result {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 0.85rem;
+    line-height: 1.7;
+    display: none;
+  }
+
+  .import-result.show { display: block; }
+
+  .import-result .success { color: var(--green); }
+  .import-result .error { color: var(--red); }
+
+  .import-progress {
+    display: none;
+    text-align: center;
+    padding: 20px;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+  }
+
+  .import-progress.show { display: block; }
+
+  .import-progress .spinner {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    border: 3px solid var(--border);
+    border-top: 3px solid var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   /* Responsive */
   @media (max-width: 600px) {
     body { padding: 12px; }
@@ -308,6 +419,7 @@
         <button class="period-btn" data-days="365">1y</button>
       </div>
       <button class="settings-toggle" id="settingsToggle">&#9881; Goals</button>
+      <button class="settings-toggle" id="importToggle">&#128229; Import</button>
     </div>
   </div>
 
@@ -420,6 +532,24 @@
   </div>
 </div>
 
+<!-- Import Modal -->
+<div class="import-overlay" id="importOverlay">
+  <div class="import-modal">
+    <button class="import-close" id="importClose">&times;</button>
+    <h2>Import Health Connect Data</h2>
+    <p>Upload a Health Connect export <strong>.db</strong> file to import historical data. Re-importing the same file is safe — duplicates are automatically replaced.</p>
+    <div class="import-dropzone" id="importDropzone">
+      <span class="icon">&#128196;</span>
+      Drop .db file here or <strong>click to browse</strong>
+      <input type="file" id="importFile" accept=".db">
+    </div>
+    <div class="import-progress" id="importProgress">
+      <span class="spinner"></span> Importing data...
+    </div>
+    <div class="import-result" id="importResult"></div>
+  </div>
+</div>
+
 <script>
 let GOALS = { steps: 10000, sleep: 7, calories: 2000, height_cm: 175, age: 30, sex: 'male', target_weight_kg: null };
 let currentDays = 14;
@@ -480,6 +610,109 @@ document.addEventListener('DOMContentLoaded', async () => {
       setTimeout(() => msg.classList.remove('show'), 2000);
     } catch (e) { console.error('Failed to save goals:', e); }
   });
+
+  // Import modal
+  const importOverlay = document.getElementById('importOverlay');
+  const importDropzone = document.getElementById('importDropzone');
+  const importFileInput = document.getElementById('importFile');
+  const importProgress = document.getElementById('importProgress');
+  const importResult = document.getElementById('importResult');
+
+  document.getElementById('importToggle').addEventListener('click', () => {
+    importOverlay.classList.add('open');
+    importResult.classList.remove('show');
+    importProgress.classList.remove('show');
+    importDropzone.style.display = '';
+  });
+
+  document.getElementById('importClose').addEventListener('click', () => {
+    importOverlay.classList.remove('open');
+  });
+
+  importOverlay.addEventListener('click', (e) => {
+    if (e.target === importOverlay) importOverlay.classList.remove('open');
+  });
+
+  importDropzone.addEventListener('click', () => importFileInput.click());
+
+  importDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    importDropzone.classList.add('dragover');
+  });
+
+  importDropzone.addEventListener('dragleave', () => {
+    importDropzone.classList.remove('dragover');
+  });
+
+  importDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    importDropzone.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) handleImportFile(e.dataTransfer.files[0]);
+  });
+
+  importFileInput.addEventListener('change', () => {
+    if (importFileInput.files.length > 0) handleImportFile(importFileInput.files[0]);
+  });
+
+  async function handleImportFile(file) {
+    if (!file.name.endsWith('.db')) {
+      importResult.innerHTML = '<span class="error">Please select a .db file</span>';
+      importResult.classList.add('show');
+      return;
+    }
+
+    importDropzone.style.display = 'none';
+    importProgress.classList.add('show');
+    importResult.classList.remove('show');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/import/health-connect', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+
+      importProgress.classList.remove('show');
+
+      if (data.status === 'ok' && data.imported > 0) {
+        let html = `<span class="success">Import successful!</span><br>`;
+        html += `Days imported: <strong>${data.imported}</strong>`;
+        if (data.replaced > 0) html += ` (replaced ${data.replaced} previous imports)`;
+        html += `<br>`;
+        if (data.date_range) html += `Date range: ${data.date_range[0]} to ${data.date_range[1]}<br>`;
+        if (data.metrics) {
+          const m = data.metrics;
+          const parts = [];
+          if (m.steps) parts.push(`${m.steps}d steps`);
+          if (m.weight) parts.push(`${m.weight}d weight`);
+          if (m.calories) parts.push(`${m.calories}d calories`);
+          if (m.sleep) parts.push(`${m.sleep}d sleep`);
+          if (m.heart_rate) parts.push(`${m.heart_rate}d HR`);
+          html += `Metrics: ${parts.join(', ')}`;
+        }
+        importResult.innerHTML = html;
+        importResult.classList.add('show');
+        loadData(currentDays); // Refresh dashboard
+      } else if (data.status === 'ok') {
+        importResult.innerHTML = '<span class="success">No new data found in export.</span>';
+        importResult.classList.add('show');
+      } else {
+        importResult.innerHTML = `<span class="error">Error: ${data.message}</span>`;
+        importResult.classList.add('show');
+      }
+    } catch (err) {
+      importProgress.classList.remove('show');
+      importResult.innerHTML = `<span class="error">Upload failed: ${err.message}</span>`;
+      importResult.classList.add('show');
+    }
+
+    // Reset file input so same file can be re-selected
+    importFileInput.value = '';
+    importDropzone.style.display = '';
+  }
 
   loadData(currentDays);
 

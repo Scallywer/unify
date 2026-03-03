@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional
 
 
 class IngestPayload(BaseModel):
@@ -11,9 +11,3 @@ class IngestPayload(BaseModel):
     resting_hr_bpm: Optional[int] = None
     workout_type: Optional[str] = None
     workout_duration_min: Optional[int] = None
-
-
-class HealthConnectPayload(BaseModel):
-    startTime: str
-    endTime: str
-    result: Dict[str, Any] = {}

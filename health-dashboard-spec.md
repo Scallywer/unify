@@ -10,9 +10,9 @@ Build a self-hosted personal health dashboard that aggregates weight, calories, 
 
 ```
 Mi Band ──── Mi Fitness app ──┐
-Eufy Life (scale) ────────────┼──→ Android Health Connect ──[MacroDroid]──→ Backend API
-MyFitnessPal ─────────────────┘                                                   │
-                                                                             Web Dashboard
+Eufy Life (scale) ────────────┼──→ Android Health Connect ──[Tasker]──→ Backend API
+MyFitnessPal ─────────────────┘                                              │
+                                                                        Web Dashboard
 ```
 
 ### Source apps (user manages these, no dev work needed)
@@ -21,7 +21,7 @@ MyFitnessPal ─────────────────┘             
 - **MyFitnessPal** — syncs calorie intake to Health Connect
 
 ### Android bridge (user manages this, no dev work needed)
-- **MacroDroid** (Android automation app) reads from Health Connect on a schedule and HTTP POSTs the data to the backend API
+- **Tasker** (Android automation app) reads from Health Connect on a schedule via Health Connect plugins and HTTP POSTs the data to the backend API
 - No Android app development required
 
 ---
@@ -49,7 +49,7 @@ MyFitnessPal ─────────────────┘             
 
 ### API Endpoints
 
-#### Ingest (called by MacroDroid)
+#### Ingest (called by Tasker)
 ```
 POST /api/ingest
 Content-Type: application/json
@@ -65,7 +65,7 @@ Content-Type: application/json
   "workout_duration_min": 45   // optional
 }
 ```
-- All fields except `timestamp` are optional — MacroDroid may POST partial payloads
+- All fields except `timestamp` are optional — Tasker may POST partial payloads
 - Returns `200 OK` with `{"status": "ok"}`
 - Simple shared secret auth via header: `X-API-Key: <secret>`
 
@@ -174,7 +174,7 @@ health-dashboard/
 
 1. Requirements (Python 3.11+)
 2. Install & run instructions
-3. How to configure MacroDroid to POST to `/api/ingest` (example payload + headers)
+3. How to configure Tasker to read Health Connect and POST to `/api/ingest` (example payload + headers)
 4. How to set the API key in `.env`
 5. How to access the dashboard
 
@@ -185,5 +185,6 @@ health-dashboard/
 - No user accounts / multi-user support
 - No mobile app development
 - No direct integration with Mi Fitness, Eufy, or MFP APIs (Health Connect is the bridge)
+- No Google Fit — not used in any part of the pipeline
 - No cloud hosting — strictly self-hosted
 - No notifications or alerts (v1)

@@ -1,6 +1,6 @@
 services:
   health-dashboard:
-    build: .
+    image: ghcr.io/scallywer/unify:latest
     ports:
       - "8000:8000"
     volumes:

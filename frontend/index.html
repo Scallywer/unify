@@ -1673,6 +1673,8 @@ function updateTdeeChart(deficitData) {
   const consumedValues = daysWithData.map(d => (d.calories_consumed != null ? d.calories_consumed : null));
   // Mark incomplete calorie days for visual styling
   const incompleteFlags = daysWithData.map(d => d.calories_incomplete === true);
+  // Mark days with workout data for TDEE point styling
+  const hasWorkoutFlags = daysWithData.map(d => (d.workout_calories && d.workout_calories > 0) || (d.workouts && d.workouts.length > 0));
   const breakdowns = daysWithData;
 
   if (tdeeChart) tdeeChart.destroy();
@@ -1700,8 +1702,11 @@ function updateTdeeChart(deficitData) {
           backgroundColor: 'rgba(116, 185, 255, 0.08)',
           fill: false,
           tension: 0.3,
-          pointRadius: daysWithData.length > 60 ? 0 : 4,
+          pointRadius: daysWithData.length > 60 ? 0 : hasWorkoutFlags.map(hasWorkout => hasWorkout ? 6 : 4),
           pointHoverRadius: 6,
+          pointStyle: hasWorkoutFlags.map(hasWorkout => hasWorkout ? 'star' : 'circle'),
+          pointBackgroundColor: hasWorkoutFlags.map(hasWorkout => hasWorkout ? '#e17055' : '#74b9ff'),
+          pointBorderColor: hasWorkoutFlags.map(hasWorkout => hasWorkout ? '#d63031' : '#74b9ff'),
           borderWidth: 2.5,
           spanGaps: false,
         },

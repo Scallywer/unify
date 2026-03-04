@@ -544,7 +544,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 has_title = "title" in workout_columns
                 
                 query = """
-                    SELECT local_date, exercise_type, (end_time - start_time) as duration_ms
+                    SELECT local_date, exercise_type, start_time, end_time, (end_time - start_time) as duration_ms
                 """
                 if has_title:
                     query += ", title"
@@ -558,8 +558,10 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 for row in hc.execute(query):
                     d = epoch_days_to_date(row[0])
                     exercise_type_raw = row[1]
-                    duration_ms = row[2]
-                    title = row[3] if len(row) > 3 else None
+                    start_time = row[2]
+                    end_time = row[3]
+                    duration_ms = row[4]
+                    title = row[5] if len(row) > 5 else None
                     
                     if duration_ms and duration_ms > 0:
                         duration_min = int(round(duration_ms / 60_000))
@@ -573,11 +575,26 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                                 if inferred_type != workout_type:
                                     workout_type = inferred_type
                             
-                            # Health Connect doesn't provide per-workout calories in exports
-                            # total_calories_burned_record_table contains TOTAL daily expenditure
-                            # (BMR + steps + workouts + everything), not just workout calories
-                            # So we leave calories_burned as None to avoid double-counting
+                            # Extract workout calories from first record in total_calories_burned_record_table
+                            # The first record that starts at the exercise start time contains the workout calories
                             calories_burned = None
+                            if "total_calories_burned_record_table" in tables and start_time:
+                                try:
+                                    # Find the first calorie record that starts at or very close to exercise start time
+                                    calorie_record = hc.execute("""
+                                        SELECT energy
+                                        FROM total_calories_burned_record_table
+                                        WHERE start_time >= ? AND start_time <= ?
+                                        ORDER BY start_time
+                                        LIMIT 1
+                                    """, (start_time, start_time + 60000)).fetchone()  # Within 1 minute
+                                    
+                                    if calorie_record and calorie_record[0]:
+                                        # Convert from cal to kcal
+                                        calories_burned = int(round(calorie_record[0] / 1000.0))
+                                except sqlite3.OperationalError:
+                                    # Table might not exist or have different schema
+                                    pass
                             
                             workouts_to_import.append({
                                 "date": d,
@@ -817,13 +834,11 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
             entry["distance_km"] = round(distance_km, 2)
 
             # Workout calories for this day
-            # Note: Health Connect doesn't provide per-workout calories in exports,
-            # so workout_calories will be 0. Workout calories are not included in TDEE
-            # to avoid double-counting (total_calories_burned already includes everything).
+            # Extract from workouts imported from Health Connect (first record method)
             workout_calories = 0.0
             day_workouts = workouts_by_date.get(day["date"], [])
             if day_workouts:
-                # Sum calories from all workouts for this day (will be 0 since calories_burned is None)
+                # Sum calories from all workouts for this day
                 workout_calories = sum(w.get("calories_burned") or 0 for w in day_workouts)
                 entry["workouts"] = day_workouts
                 entry["workout_calories"] = round(workout_calories) if workout_calories > 0 else None
@@ -839,26 +854,22 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
             entry["tef"] = round(tef)
 
             # Always calculate TDEE for comparison
-            # Calculate TDEE = BMR + Walking + TEF + NEAT
-            # Note: Workout calories are NOT added here because:
-            # 1. Health Connect doesn't provide per-workout calories in exports
-            # 2. total_calories_burned_record_table already includes workout calories in the total
-            # 3. Adding them would cause double-counting
-            tdee_calculated = bmr + walking + tef + neat
+            # Calculate TDEE = BMR + Walking + Workout Calories + TEF + NEAT
+            # Workout calories are now extracted from the first record in total_calories_burned_record_table
+            # that starts at the exercise start time, which contains the actual workout calories
+            tdee_calculated = bmr + walking + workout_calories + tef + neat
             entry["tdee_calculated"] = round(tdee_calculated)
             
             # Use measured TDEE from Health Connect if available, otherwise use calculated
             if calories_burned is not None:
                 # Use measured TDEE from total_calories_burned_record_table
                 tdee_measured = calories_burned
-                tdee = tdee_measured  # Primary TDEE (measured when available)
-                entry["tdee"] = round(tdee)
+                entry["tdee"] = round(tdee_measured)  # Primary TDEE (measured when available)
                 entry["tdee_measured"] = round(tdee_measured)
                 entry["tdee_measured_flag"] = True  # Flag to indicate measured is available
             else:
                 # No measured TDEE, use calculated
-                tdee = tdee_calculated  # Primary TDEE (calculated)
-                entry["tdee"] = round(tdee)
+                entry["tdee"] = round(tdee_calculated)  # Primary TDEE (calculated)
                 entry["tdee_measured"] = None
                 entry["tdee_measured_flag"] = False  # Flag to indicate no measured data
 

@@ -536,39 +536,9 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
 
         # Workouts/Exercise sessions - store individually
         workouts_to_import = []
-        # Get daily calories burned to attribute to workouts proportionally
-        daily_calories_burned = {}
-        daily_workout_durations = {}  # Track total workout duration per day
         
         if "exercise_session_record_table" in tables:
             try:
-                # First pass: collect all workouts and calculate total duration per day
-                for row in hc.execute("""
-                    SELECT local_date, exercise_type, (end_time - start_time) as duration_ms
-                    FROM exercise_session_record_table
-                    WHERE end_time > start_time
-                """):
-                    d = epoch_days_to_date(row[0])
-                    duration_ms = row[2]  # row[0]=date, row[1]=exercise_type, row[2]=duration_ms
-                    if duration_ms and duration_ms > 0:
-                        duration_min = int(round(duration_ms / 60_000))
-                        if duration_min > 0:
-                            if d not in daily_workout_durations:
-                                daily_workout_durations[d] = 0
-                            daily_workout_durations[d] += duration_min
-                
-                # Get daily calories burned
-                if "total_calories_burned_record_table" in tables:
-                    for row in hc.execute(
-                        "SELECT local_date, SUM(energy) FROM total_calories_burned_record_table "
-                        "WHERE energy IS NOT NULL GROUP BY local_date"
-                    ):
-                        d = epoch_days_to_date(row[0])
-                        kcal = int(round(row[1] / 1000.0))
-                        if kcal > 0:
-                            daily_calories_burned[d] = kcal
-                
-                # Second pass: import workouts and attribute calories proportionally
                 # Get title field if available
                 workout_columns = [col[1] for col in hc.execute("PRAGMA table_info(exercise_session_record_table)").fetchall()]
                 has_title = "title" in workout_columns
@@ -603,14 +573,11 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                                 if inferred_type != workout_type:
                                     workout_type = inferred_type
                             
-                            # Attribute calories proportionally based on duration
+                            # Health Connect doesn't provide per-workout calories in exports
+                            # total_calories_burned_record_table contains TOTAL daily expenditure
+                            # (BMR + steps + workouts + everything), not just workout calories
+                            # So we leave calories_burned as None to avoid double-counting
                             calories_burned = None
-                            if d in daily_calories_burned and d in daily_workout_durations:
-                                total_daily_duration = daily_workout_durations[d]
-                                if total_daily_duration > 0:
-                                    # Proportion of daily calories = (workout duration / total workout duration) * daily calories
-                                    proportion = duration_min / total_daily_duration
-                                    calories_burned = int(round(proportion * daily_calories_burned[d]))
                             
                             workouts_to_import.append({
                                 "date": d,
@@ -849,10 +816,13 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
             entry["distance_km"] = round(distance_km, 2)
 
             # Workout calories for this day
+            # Note: Health Connect doesn't provide per-workout calories in exports,
+            # so workout_calories will be 0. Workout calories are not included in TDEE
+            # to avoid double-counting (total_calories_burned already includes everything).
             workout_calories = 0.0
             day_workouts = workouts_by_date.get(day["date"], [])
             if day_workouts:
-                # Sum calories from all workouts for this day
+                # Sum calories from all workouts for this day (will be 0 since calories_burned is None)
                 workout_calories = sum(w.get("calories_burned") or 0 for w in day_workouts)
                 entry["workouts"] = day_workouts
                 entry["workout_calories"] = round(workout_calories) if workout_calories > 0 else None
@@ -867,8 +837,12 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
                 tef = 0.1 * bmr
             entry["tef"] = round(tef)
 
-            # TDEE = BMR + Walking + Workout Calories + TEF + NEAT
-            tdee = bmr + walking + workout_calories + tef + neat
+            # TDEE = BMR + Walking + TEF + NEAT
+            # Note: Workout calories are NOT added here because:
+            # 1. Health Connect doesn't provide per-workout calories in exports
+            # 2. total_calories_burned_record_table already includes workout calories in the total
+            # 3. Adding them would cause double-counting
+            tdee = bmr + walking + tef + neat
             entry["tdee"] = round(tdee)
 
             # Always include calories_consumed (null if missing) for chart consistency

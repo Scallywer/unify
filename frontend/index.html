@@ -729,6 +729,12 @@
     <div class="chart-wrap"><canvas id="stepsChart"></canvas></div>
   </div>
 
+  <!-- Sleep Chart -->
+  <div class="chart-section">
+    <h2>Sleep</h2>
+    <div class="chart-wrap"><canvas id="sleepChart"></canvas></div>
+  </div>
+
   <!-- TDEE vs Consumed -->
   <div class="chart-section">
     <h2>TDEE vs Consumed</h2>
@@ -817,6 +823,7 @@ let currentPeriod = 'day';
 let weightChart = null;
 let caloriesChart = null;
 let stepsChart = null;
+let sleepChart = null;
 let tdeeChart = null;
 let deficitChart = null;
 
@@ -1279,6 +1286,7 @@ async function loadData(period) {
     updateWeightChart(daily);
     updateCaloriesChart(daily);
     updateStepsChart(daily);
+    updateSleepChart(daily);
     updateTdeeChart(deficitData);
     updateDeficitChart(deficitData);
     updateWorkouts(workouts);
@@ -1585,6 +1593,70 @@ function updateStepsChart(daily) {
         y: {
           grid: { color: chartGrid() },
           title: { display: true, text: 'Steps', color: chartGrid() }
+        }
+      }
+    }
+  });
+}
+
+// --- Sleep Chart ---
+function updateSleepChart(daily) {
+  const daysWithData = daily.filter(d => d.sleep_hours != null);
+  const labels = daysWithData.map(d => d.label || formatDate(d.date));
+  const sleepValues = daysWithData.map(d => d.sleep_hours);
+
+  if (sleepChart) sleepChart.destroy();
+
+  if (daysWithData.length === 0) {
+    const ctx = document.getElementById('sleepChart').getContext('2d');
+    sleepChart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: ['No data'], datasets: [{ data: [0] }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+    return;
+  }
+
+  const ctx = document.getElementById('sleepChart').getContext('2d');
+  sleepChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Sleep',
+        data: sleepValues,
+        borderColor: '#a29bfe',
+        backgroundColor: 'rgba(162, 155, 254, 0.1)',
+        fill: true,
+        tension: 0.35,
+        pointRadius: daysWithData.length > 60 ? 0 : 3,
+        pointHoverRadius: 6,
+        borderWidth: 2.5,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { 
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return context.parsed.y.toFixed(1) + ' hrs';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          grid: { color: chartGrid() },
+          title: { display: true, text: 'Hours', color: chartGrid() },
+          ticks: {
+            callback: function(value) {
+              return value.toFixed(1) + 'h';
+            }
+          }
         }
       }
     }

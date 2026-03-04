@@ -7,4 +7,5 @@ services:
       - ./data:/app/data
     environment:
       - DB_PATH=/app/data/health.db
+      - AUTH_SECRET=123456
     restart: unless-stopped

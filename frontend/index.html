@@ -440,6 +440,113 @@
     transition: background 0.25s, color 0.25s, border-color 0.25s;
   }
 
+  /* Auth overlay */
+  .auth-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 200;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .auth-overlay.hidden { display: none; }
+
+  .auth-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 36px 32px;
+    width: 90%;
+    max-width: 380px;
+  }
+
+  .auth-box h2 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    text-align: center;
+  }
+
+  .auth-box .auth-sub {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-bottom: 22px;
+  }
+
+  .auth-box input {
+    display: block;
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+  }
+
+  .auth-box input:focus { outline: none; border-color: var(--accent); }
+
+  .auth-box .auth-btn {
+    display: block;
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 11px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    margin-bottom: 10px;
+  }
+
+  .auth-box .auth-btn:hover { opacity: 0.85; }
+
+  .auth-box .auth-toggle {
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+
+  .auth-box .auth-toggle a {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .auth-box .auth-toggle a:hover { text-decoration: underline; }
+
+  .auth-error {
+    background: rgba(231, 76, 60, 0.12);
+    color: var(--red);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    margin-bottom: 12px;
+    display: none;
+  }
+
+  .auth-error.show { display: block; }
+
+  /* Logout button */
+  .logout-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+  }
+
+  .logout-btn:hover { color: var(--red); border-color: var(--red); }
+
   /* Responsive */
   @media (max-width: 600px) {
     body { padding: 12px; }
@@ -454,22 +561,36 @@
 </head>
 <body>
 
+<!-- Auth Overlay -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-box">
+    <h2 id="authTitle">Sign In</h2>
+    <p class="auth-sub" id="authSub">Log in to your health dashboard</p>
+    <div class="auth-error" id="authError"></div>
+    <input type="text" id="authUsername" placeholder="Username" autocomplete="username">
+    <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password">
+    <button class="auth-btn" id="authSubmit">Sign In</button>
+    <div class="auth-toggle" id="authToggle">
+      Don't have an account? <a id="authSwitchLink">Create one</a>
+    </div>
+  </div>
+</div>
+
 <div class="container">
   <!-- Header -->
   <div class="header">
     <h1><span>&#127939;</span> Health Dashboard</h1>
     <div style="display:flex;gap:8px;align-items:center;">
       <div class="period-selector">
-        <button class="period-btn" data-days="7">7d</button>
-        <button class="period-btn active" data-days="14">14d</button>
-        <button class="period-btn" data-days="30">30d</button>
-        <button class="period-btn" data-days="90">90d</button>
-        <button class="period-btn" data-days="365">1y</button>
+        <button class="period-btn active" data-period="day">Day</button>
+        <button class="period-btn" data-period="week">Week</button>
+        <button class="period-btn" data-period="month">Month</button>
       </div>
       <button class="settings-toggle" id="settingsToggle">&#9881; Goals</button>
       <button class="settings-toggle" id="profileToggle">&#128100; Profile</button>
       <button class="settings-toggle" id="importToggle">&#128229; Import</button>
       <button class="theme-toggle" id="themeToggle" title="Toggle light/dark theme">&#127769;</button>
+      <button class="logout-btn" id="logoutBtn" title="Log out">Logout</button>
     </div>
   </div>
 
@@ -633,14 +754,166 @@
 </div>
 
 <script>
+// --- Auth helpers ---
+function getToken() { return localStorage.getItem('health-dash-token'); }
+function setToken(token, username) {
+  localStorage.setItem('health-dash-token', token);
+  localStorage.setItem('health-dash-user', username);
+}
+function clearToken() {
+  localStorage.removeItem('health-dash-token');
+  localStorage.removeItem('health-dash-user');
+}
+
+function showAuth() {
+  document.getElementById('authOverlay').classList.remove('hidden');
+}
+function hideAuth() {
+  document.getElementById('authOverlay').classList.add('hidden');
+}
+
+/**
+ * Wrapper around fetch that injects the JWT Authorization header.
+ * On 401/403, clears the token and shows the login screen.
+ */
+async function authFetch(url, opts = {}) {
+  const token = getToken();
+  if (!token) { showAuth(); throw new Error('Not authenticated'); }
+  opts.headers = opts.headers || {};
+  if (!(opts.body instanceof FormData)) {
+    // Don't set Content-Type for FormData (browser sets boundary)
+    opts.headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    opts.headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(url, opts);
+  if (res.status === 401 || res.status === 403) {
+    clearToken();
+    showAuth();
+    throw new Error('Session expired');
+  }
+  return res;
+}
+
 let GOALS = { steps: 10000, sleep: 7, calories: 2000, target_weight_kg: null };
 let PROFILE = { height_cm: 175, age: 30, sex: 'male' };
-let currentDays = 14;
+let currentPeriod = 'day';
 let weightChart = null;
 let caloriesChart = null;
 let stepsChart = null;
 let tdeeChart = null;
 let deficitChart = null;
+
+// Period config: fetchDays for the API, and labels for cards
+const PERIOD_CONFIG = {
+  day:   { fetchDays: 14,  currentLabel: 'today',      previousLabel: 'yesterday' },
+  week:  { fetchDays: 90,  currentLabel: 'this week',  previousLabel: 'last week' },
+  month: { fetchDays: 365, currentLabel: 'this month', previousLabel: 'last month' },
+};
+
+// --- Aggregation helpers ---
+function getISOWeekKey(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((tmp - yearStart) / 86400000 + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+function getMonthKey(dateStr) {
+  return dateStr.substring(0, 7); // "YYYY-MM"
+}
+
+function avgNonNull(arr) {
+  const valid = arr.filter(v => v != null);
+  return valid.length > 0 ? valid.reduce((a, b) => a + b, 0) / valid.length : null;
+}
+
+function roundOrNull(v, decimals) {
+  return v != null ? parseFloat(v.toFixed(decimals)) : null;
+}
+
+const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function aggregateDaily(daily, keyFn, labelFn) {
+  const groups = {};
+  const groupOrder = [];
+  for (const row of daily) {
+    const key = keyFn(row.date);
+    if (!groups[key]) {
+      groups[key] = [];
+      groupOrder.push(key);
+    }
+    groups[key].push(row);
+  }
+  return groupOrder.map(key => {
+    const rows = groups[key];
+    return {
+      date: rows[0].date,
+      label: labelFn(key),
+      weight_kg: roundOrNull(avgNonNull(rows.map(r => r.weight_kg)), 1),
+      calories_kcal: roundOrNull(avgNonNull(rows.map(r => r.calories_kcal)), 0),
+      steps: roundOrNull(avgNonNull(rows.map(r => r.steps)), 0),
+      sleep_hours: roundOrNull(avgNonNull(rows.map(r => r.sleep_hours)), 1),
+      resting_hr_bpm: roundOrNull(avgNonNull(rows.map(r => r.resting_hr_bpm)), 0),
+    };
+  });
+}
+
+function aggregateDeficitDaily(defDaily, keyFn, labelFn) {
+  const groups = {};
+  const groupOrder = [];
+  for (const row of defDaily) {
+    const key = keyFn(row.date);
+    if (!groups[key]) {
+      groups[key] = [];
+      groupOrder.push(key);
+    }
+    groups[key].push(row);
+  }
+  return groupOrder.map(key => {
+    const rows = groups[key];
+    return {
+      date: rows[0].date,
+      label: labelFn(key),
+      bmr: roundOrNull(avgNonNull(rows.map(r => r.bmr)), 0),
+      neat: roundOrNull(avgNonNull(rows.map(r => r.neat)), 0),
+      walking_calories: roundOrNull(avgNonNull(rows.map(r => r.walking_calories)), 0),
+      distance_km: roundOrNull(avgNonNull(rows.map(r => r.distance_km)), 2),
+      tef: roundOrNull(avgNonNull(rows.map(r => r.tef)), 0),
+      tdee: roundOrNull(avgNonNull(rows.map(r => r.tdee)), 0),
+      calories_consumed: roundOrNull(avgNonNull(rows.map(r => r.calories_consumed)), 0),
+      deficit: roundOrNull(avgNonNull(rows.map(r => r.deficit)), 0),
+      weekly_kg_change: roundOrNull(avgNonNull(rows.map(r => r.weekly_kg_change)), 2),
+    };
+  });
+}
+
+function applyAggregation(daily, period) {
+  if (period === 'week') {
+    return aggregateDaily(daily, getISOWeekKey, key => key.split('-')[1]);
+  } else if (period === 'month') {
+    return aggregateDaily(daily, getMonthKey, key => {
+      const m = parseInt(key.split('-')[1], 10) - 1;
+      return MONTH_LABELS[m];
+    });
+  }
+  // day: add label from formatDate
+  return daily.map(d => ({ ...d, label: formatDate(d.date) }));
+}
+
+function applyDeficitAggregation(defDaily, period) {
+  if (period === 'week') {
+    return aggregateDeficitDaily(defDaily, getISOWeekKey, key => key.split('-')[1]);
+  } else if (period === 'month') {
+    return aggregateDeficitDaily(defDaily, getMonthKey, key => {
+      const m = parseInt(key.split('-')[1], 10) - 1;
+      return MONTH_LABELS[m];
+    });
+  }
+  return (defDaily || []).map(d => ({ ...d, label: formatDate(d.date) }));
+}
 
 // --- Theme ---
 function getTheme() {
@@ -673,11 +946,101 @@ function chartGrid() {
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', async () => {
+  // --- Auth UI setup ---
+  let isLoginMode = true;
+
+  const authOverlay = document.getElementById('authOverlay');
+  const authTitle = document.getElementById('authTitle');
+  const authSub = document.getElementById('authSub');
+  const authUsername = document.getElementById('authUsername');
+  const authPassword = document.getElementById('authPassword');
+  const authSubmit = document.getElementById('authSubmit');
+  const authError = document.getElementById('authError');
+  const authSwitchLink = document.getElementById('authSwitchLink');
+
+  function setAuthMode(login) {
+    isLoginMode = login;
+    authTitle.textContent = login ? 'Sign In' : 'Create Account';
+    authSub.textContent = login ? 'Log in to your health dashboard' : 'Set up your new account';
+    authSubmit.textContent = login ? 'Sign In' : 'Create Account';
+    document.getElementById('authToggle').innerHTML = login
+      ? 'Don\'t have an account? <a id="authSwitchLink">Create one</a>'
+      : 'Already have an account? <a id="authSwitchLink">Sign in</a>';
+    document.getElementById('authSwitchLink').addEventListener('click', () => setAuthMode(!isLoginMode));
+    authError.classList.remove('show');
+    authError.textContent = '';
+  }
+
+  authSwitchLink.addEventListener('click', () => setAuthMode(false));
+
+  authSubmit.addEventListener('click', handleAuth);
+  authPassword.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleAuth(); });
+
+  async function handleAuth() {
+    const username = authUsername.value.trim();
+    const password = authPassword.value;
+    if (!username || !password) {
+      authError.textContent = 'Please fill in both fields';
+      authError.classList.add('show');
+      return;
+    }
+    if (!isLoginMode && password.length < 4) {
+      authError.textContent = 'Password must be at least 4 characters';
+      authError.classList.add('show');
+      return;
+    }
+    authError.classList.remove('show');
+    authSubmit.disabled = true;
+    authSubmit.textContent = 'Please wait...';
+
+    try {
+      const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        authError.textContent = data.detail || 'Authentication failed';
+        authError.classList.add('show');
+        setAuthMode(isLoginMode);
+        return;
+      }
+      setToken(data.token, data.username);
+      hideAuth();
+      authPassword.value = '';
+      await initDashboard();
+    } catch (err) {
+      authError.textContent = 'Network error. Please try again.';
+      authError.classList.add('show');
+      setAuthMode(isLoginMode);
+    }
+  }
+
+  // Logout
+  document.getElementById('logoutBtn').addEventListener('click', () => {
+    clearToken();
+    showAuth();
+    setAuthMode(true);
+    authUsername.value = '';
+    authPassword.value = '';
+  });
+
+  // Check existing token
+  if (!getToken()) {
+    showAuth();
+  } else {
+    hideAuth();
+    await initDashboard();
+  }
+
+  async function initDashboard() {
   // Load goals + profile from server
   try {
     const [goalsRes, profileRes] = await Promise.all([
-      fetch('/api/goals'),
-      fetch('/api/profile')
+      authFetch('/api/goals'),
+      authFetch('/api/profile')
     ]);
     GOALS = { ...GOALS, ...(await goalsRes.json()) };
     PROFILE = { ...PROFILE, ...(await profileRes.json()) };
@@ -710,7 +1073,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('themeToggle').addEventListener('click', () => {
     const next = getTheme() === 'dark' ? 'light' : 'dark';
     applyTheme(next);
-    loadData(currentDays); // redraw charts with new colors
+    loadData(currentPeriod); // redraw charts with new colors
   });
 
   // Save goals
@@ -723,13 +1086,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       target_weight_kg: twVal ? parseFloat(twVal) : null,
     };
     try {
-      await fetch('/api/goals', {
+      await authFetch('/api/goals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newGoals),
       });
       GOALS = newGoals;
-      loadData(currentDays);
+      loadData(currentPeriod);
       flashMsg('saveGoalsMsg');
     } catch (e) { console.error('Failed to save goals:', e); }
   });
@@ -742,13 +1105,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       sex: document.getElementById('profile-sex').value || PROFILE.sex,
     };
     try {
-      await fetch('/api/profile', {
+      await authFetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newProfile),
       });
       PROFILE = newProfile;
-      loadData(currentDays);
+      loadData(currentPeriod);
       flashMsg('saveProfileMsg');
     } catch (e) { console.error('Failed to save profile:', e); }
   });
@@ -817,7 +1180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('/api/import/health-connect', {
+      const res = await authFetch('/api/import/health-connect', {
         method: 'POST',
         body: formData,
       });
@@ -843,7 +1206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         importResult.innerHTML = html;
         importResult.classList.add('show');
-        loadData(currentDays); // Refresh dashboard
+        loadData(currentPeriod); // Refresh dashboard
       } else if (data.status === 'ok') {
         importResult.innerHTML = '<span class="success">No new data found in export.</span>';
         importResult.classList.add('show');
@@ -862,30 +1225,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     importDropzone.style.display = '';
   }
 
-  loadData(currentDays);
+  loadData(currentPeriod);
 
   document.querySelectorAll('.period-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      currentDays = parseInt(btn.dataset.days);
-      loadData(currentDays);
+      currentPeriod = btn.dataset.period;
+      loadData(currentPeriod);
     });
   });
+  } // end initDashboard
 });
 
-async function loadData(days) {
+async function loadData(period) {
+  const cfg = PERIOD_CONFIG[period] || PERIOD_CONFIG.day;
+  const days = cfg.fetchDays;
   try {
     const [dailyRes, workoutsRes, deficitRes] = await Promise.all([
-      fetch(`/api/data/daily?days=${days}`),
-      fetch(`/api/data/workouts?days=${days}`),
-      fetch(`/api/data/deficit?days=${days}`)
+      authFetch(`/api/data/daily?days=${days}`),
+      authFetch(`/api/data/workouts?days=${days}`),
+      authFetch(`/api/data/deficit?days=${days}`)
     ]);
-    const daily = await dailyRes.json();
+    const rawDaily = await dailyRes.json();
     const workouts = await workoutsRes.json();
-    const deficitData = await deficitRes.json();
+    const rawDeficitData = await deficitRes.json();
 
-    updateCards(daily, deficitData);
+    // Aggregate daily + deficit data based on period
+    const daily = applyAggregation(rawDaily, period);
+    const aggregatedDefDaily = applyDeficitAggregation(rawDeficitData.daily || [], period);
+    const deficitData = { ...rawDeficitData, daily: aggregatedDefDaily };
+
+    updateCards(daily, deficitData, period);
     updateWeightChart(daily);
     updateCaloriesChart(daily);
     updateStepsChart(daily);
@@ -898,22 +1269,25 @@ async function loadData(days) {
 }
 
 // --- Summary Cards ---
-function updateCards(daily, deficitData) {
-  const today = daily.length > 0 ? daily[daily.length - 1] : null;
-  const yesterday = daily.length > 1 ? daily[daily.length - 2] : null;
+function updateCards(daily, deficitData, period) {
+  const cfg = PERIOD_CONFIG[period] || PERIOD_CONFIG.day;
+  const current = daily.length > 0 ? daily[daily.length - 1] : null;
+  const previous = daily.length > 1 ? daily[daily.length - 2] : null;
+  const curLabel = cfg.currentLabel;   // "today" / "this week" / "this month"
+  const prevLabel = cfg.previousLabel; // "yesterday" / "last week" / "last month"
 
   // Weight
-  if (today && today.weight_kg != null) {
-    const w = today.weight_kg;
+  if (current && current.weight_kg != null) {
+    const w = current.weight_kg;
     document.getElementById('card-weight').textContent = w.toFixed(1) + ' kg';
-    if (yesterday && yesterday.weight_kg != null) {
-      const delta = w - yesterday.weight_kg;
+    if (previous && previous.weight_kg != null) {
+      const delta = w - previous.weight_kg;
       const el = document.getElementById('card-weight-sub');
       const sign = delta >= 0 ? '+' : '';
-      el.textContent = `${sign}${delta.toFixed(1)} kg from yesterday`;
+      el.textContent = `${sign}${delta.toFixed(1)} kg from ${prevLabel}`;
       el.className = 'card-sub ' + (delta <= 0 ? 'good' : 'neutral');
     } else {
-      setSubNeutral('card-weight-sub', 'Latest reading');
+      setSubNeutral('card-weight-sub', period === 'day' ? 'Latest reading' : `Avg ${curLabel}`);
     }
   } else {
     document.getElementById('card-weight').textContent = '--';
@@ -921,8 +1295,8 @@ function updateCards(daily, deficitData) {
   }
 
   // Calories
-  if (today && today.calories_kcal != null) {
-    const c = today.calories_kcal;
+  if (current && current.calories_kcal != null) {
+    const c = current.calories_kcal;
     document.getElementById('card-calories').textContent = c.toLocaleString();
     const el = document.getElementById('card-calories-sub');
     if (c <= GOALS.calories) {
@@ -938,8 +1312,8 @@ function updateCards(daily, deficitData) {
   }
 
   // Steps
-  if (today && today.steps != null) {
-    const s = today.steps;
+  if (current && current.steps != null) {
+    const s = current.steps;
     document.getElementById('card-steps').textContent = s.toLocaleString();
     const el = document.getElementById('card-steps-sub');
     if (s >= GOALS.steps) {
@@ -956,8 +1330,8 @@ function updateCards(daily, deficitData) {
   }
 
   // Sleep
-  if (today && today.sleep_hours != null) {
-    const sl = today.sleep_hours;
+  if (current && current.sleep_hours != null) {
+    const sl = current.sleep_hours;
     document.getElementById('card-sleep').textContent = sl.toFixed(1) + ' hrs';
     const el = document.getElementById('card-sleep-sub');
     if (sl >= GOALS.sleep) {
@@ -973,9 +1347,9 @@ function updateCards(daily, deficitData) {
   }
 
   // Heart Rate
-  if (today && today.resting_hr_bpm != null) {
-    document.getElementById('card-hr').textContent = Math.round(today.resting_hr_bpm) + ' bpm';
-    setSubNeutral('card-hr-sub', 'Avg resting');
+  if (current && current.resting_hr_bpm != null) {
+    document.getElementById('card-hr').textContent = Math.round(current.resting_hr_bpm) + ' bpm';
+    setSubNeutral('card-hr-sub', period === 'day' ? 'Avg resting' : `Avg ${curLabel}`);
   } else {
     document.getElementById('card-hr').textContent = '--';
     setSubNeutral('card-hr-sub', 'No data');
@@ -983,13 +1357,13 @@ function updateCards(daily, deficitData) {
 
   // Calorie Balance (deficit/surplus)
   if (deficitData && deficitData.daily && deficitData.daily.length > 0) {
-    const todayDef = deficitData.daily[deficitData.daily.length - 1];
-    if (todayDef.deficit != null) {
-      const d = todayDef.deficit;
+    const latestDef = deficitData.daily[deficitData.daily.length - 1];
+    if (latestDef.deficit != null) {
+      const d = latestDef.deficit;
       const sign = d >= 0 ? '+' : '';
       document.getElementById('card-deficit').textContent = sign + d.toLocaleString();
       const el = document.getElementById('card-deficit-sub');
-      const detail = `TDEE ${todayDef.tdee} \u2022 ${todayDef.distance_km || 0} km`;
+      const detail = `TDEE ${latestDef.tdee} \u2022 ${latestDef.distance_km || 0} km`;
       if (d > 0) {
         el.textContent = `Deficit \u2022 ${detail}`;
         el.className = 'card-sub good';
@@ -1069,7 +1443,7 @@ function setSubNeutral(id, text) {
 // --- Weight Chart ---
 function updateWeightChart(daily) {
   const data = daily.filter(d => d.weight_kg != null);
-  const labels = data.map(d => formatDate(d.date));
+  const labels = data.map(d => d.label || formatDate(d.date));
   const values = data.map(d => d.weight_kg);
 
   if (weightChart) weightChart.destroy();
@@ -1108,7 +1482,7 @@ function updateWeightChart(daily) {
 
 // --- Calories Chart ---
 function updateCaloriesChart(daily) {
-  const labels = daily.map(d => formatDate(d.date));
+  const labels = daily.map(d => d.label || formatDate(d.date));
   const calories = daily.map(d => d.calories_kcal);
 
   if (caloriesChart) caloriesChart.destroy();
@@ -1142,7 +1516,7 @@ function updateCaloriesChart(daily) {
 
 // --- Steps Chart ---
 function updateStepsChart(daily) {
-  const labels = daily.map(d => formatDate(d.date));
+  const labels = daily.map(d => d.label || formatDate(d.date));
   const steps = daily.map(d => d.steps);
 
   if (stepsChart) stepsChart.destroy();
@@ -1183,7 +1557,7 @@ function updateStepsChart(daily) {
 function updateTdeeChart(deficitData) {
   const daily = deficitData.daily || [];
   const daysWithData = daily.filter(d => d.tdee != null);
-  const labels = daysWithData.map(d => formatDate(d.date));
+  const labels = daysWithData.map(d => d.label || formatDate(d.date));
   const tdeeValues = daysWithData.map(d => d.tdee);
   const consumedValues = daysWithData.map(d => d.calories_consumed || null);
   const breakdowns = daysWithData;
@@ -1300,7 +1674,7 @@ function updateDeficitChart(deficitData) {
   }
 
   const daysWithData = daily.filter(d => d.deficit != null);
-  const labels = daysWithData.map(d => formatDate(d.date));
+  const labels = daysWithData.map(d => d.label || formatDate(d.date));
   const deficitValues = daysWithData.map(d => d.deficit);
 
   if (deficitChart) deficitChart.destroy();

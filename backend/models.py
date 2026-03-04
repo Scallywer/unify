@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
@@ -11,3 +11,8 @@ class IngestPayload(BaseModel):
     resting_hr_bpm: Optional[int] = None
     workout_type: Optional[str] = None
     workout_duration_min: Optional[int] = None
+
+
+class AuthRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=50)
+    password: str = Field(..., min_length=4, max_length=128)

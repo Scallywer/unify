@@ -1,8 +1,22 @@
 import sqlite3
+import json
 import os
 from contextlib import contextmanager
 
 DB_PATH = os.getenv("DB_PATH", "./data/health.db")
+
+DEFAULT_GOALS = {
+    "steps": 10000,
+    "calories": 2000,
+    "sleep": 7,
+    "target_weight_kg": None,
+}
+
+DEFAULT_PROFILE = {
+    "height_cm": 175,
+    "age": 30,
+    "sex": "male",
+}
 
 
 def _ensure_dir():
@@ -23,8 +37,19 @@ def init_db():
     _ensure_dir()
     with get_connection() as conn:
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                goals_json TEXT NOT NULL DEFAULT '{}',
+                profile_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
                 timestamp TEXT NOT NULL,
                 date TEXT NOT NULL,
                 weight_kg REAL,
@@ -34,39 +59,118 @@ def init_db():
                 resting_hr_bpm INTEGER,
                 workout_type TEXT,
                 workout_duration_min INTEGER,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON metrics(date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON metrics(user_id)")
+
+        # Migration: add user_id column if missing (existing DBs)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
+        if "user_id" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN user_id INTEGER REFERENCES users(id)")
+
         conn.commit()
 
 
-def insert_metric(data: dict):
+# ── User helpers ──────────────────────────────────────────────
+
+def create_user(username: str, password_hash: str) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO users (username, password_hash, goals_json, profile_json) VALUES (?, ?, ?, ?)",
+            (username, password_hash, json.dumps(DEFAULT_GOALS), json.dumps(DEFAULT_PROFILE)),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_user_goals(user_id: int) -> dict:
+    user = get_user_by_id(user_id)
+    if not user:
+        return DEFAULT_GOALS.copy()
+    try:
+        goals = json.loads(user["goals_json"])
+        return {**DEFAULT_GOALS, **goals}
+    except (json.JSONDecodeError, TypeError):
+        return DEFAULT_GOALS.copy()
+
+
+def set_user_goals(user_id: int, goals: dict):
     with get_connection() as conn:
         conn.execute(
-            """
-            INSERT INTO metrics (
-                timestamp, date, weight_kg, calories_kcal, steps,
-                sleep_hours, resting_hr_bpm, workout_type, workout_duration_min
-            ) VALUES (
-                :timestamp, :date, :weight_kg, :calories_kcal, :steps,
-                :sleep_hours, :resting_hr_bpm, :workout_type, :workout_duration_min
-            )
-            """,
-            data,
+            "UPDATE users SET goals_json = ? WHERE id = ?",
+            (json.dumps(goals), user_id),
         )
         conn.commit()
 
 
-def get_all_metrics():
+def get_user_profile(user_id: int) -> dict:
+    user = get_user_by_id(user_id)
+    if not user:
+        return DEFAULT_PROFILE.copy()
+    try:
+        profile = json.loads(user["profile_json"])
+        return {**DEFAULT_PROFILE, **profile}
+    except (json.JSONDecodeError, TypeError):
+        return DEFAULT_PROFILE.copy()
+
+
+def set_user_profile(user_id: int, profile: dict):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE users SET profile_json = ? WHERE id = ?",
+            (json.dumps(profile), user_id),
+        )
+        conn.commit()
+
+
+# ── Metric helpers (user-scoped) ─────────────────────────────
+
+def insert_metric(data: dict, user_id: int):
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO metrics (
+                user_id, timestamp, date, weight_kg, calories_kcal, steps,
+                sleep_hours, resting_hr_bpm, workout_type, workout_duration_min
+            ) VALUES (
+                :user_id, :timestamp, :date, :weight_kg, :calories_kcal, :steps,
+                :sleep_hours, :resting_hr_bpm, :workout_type, :workout_duration_min
+            )
+            """,
+            {**data, "user_id": user_id},
+        )
+        conn.commit()
+
+
+def get_all_metrics(user_id: int):
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM metrics ORDER BY timestamp DESC"
+            "SELECT * FROM metrics WHERE user_id = ? ORDER BY timestamp DESC",
+            (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
 
 
-def get_daily_metrics(days: int = 30):
+def get_daily_metrics(days: int = 30, *, user_id: int):
     """Return daily aggregated metrics for the last N days.
 
     Aggregation: MAX for steps/calories (Tasker may report multiple times),
@@ -83,53 +187,55 @@ def get_daily_metrics(days: int = 30):
                 AVG(sleep_hours) AS sleep_hours,
                 AVG(resting_hr_bpm) AS resting_hr_bpm
             FROM metrics
-            WHERE date >= date('now', :offset)
+            WHERE user_id = :user_id AND date >= date('now', :offset)
             GROUP BY date
             ORDER BY date ASC
             """,
-            {"offset": f"-{days} days"},
+            {"user_id": user_id, "offset": f"-{days} days"},
         ).fetchall()
         return [dict(row) for row in rows]
 
 
-def get_workouts(days: int = 7):
+def get_workouts(days: int = 7, *, user_id: int):
     """Return recent workout entries."""
     with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT date, workout_type, workout_duration_min
             FROM metrics
-            WHERE workout_type IS NOT NULL
+            WHERE user_id = :user_id AND workout_type IS NOT NULL
               AND date >= date('now', :offset)
             ORDER BY date DESC
             """,
-            {"offset": f"-{days} days"},
+            {"user_id": user_id, "offset": f"-{days} days"},
         ).fetchall()
         return [dict(row) for row in rows]
 
 
-def get_dates_with_data() -> list[str]:
+def get_dates_with_data(user_id: int) -> list[str]:
     """Return a sorted list of all dates that have at least one metric row."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT date FROM metrics ORDER BY date ASC"
+            "SELECT DISTINCT date FROM metrics WHERE user_id = ? ORDER BY date ASC",
+            (user_id,),
         ).fetchall()
         return [row[0] for row in rows]
 
 
-def insert_metrics_batch(rows: list[dict]):
+def insert_metrics_batch(rows: list[dict], user_id: int):
     """Insert multiple metric rows in a single transaction."""
+    tagged = [{**r, "user_id": user_id} for r in rows]
     with get_connection() as conn:
         conn.executemany(
             """
             INSERT INTO metrics (
-                timestamp, date, weight_kg, calories_kcal, steps,
+                user_id, timestamp, date, weight_kg, calories_kcal, steps,
                 sleep_hours, resting_hr_bpm, workout_type, workout_duration_min
             ) VALUES (
-                :timestamp, :date, :weight_kg, :calories_kcal, :steps,
+                :user_id, :timestamp, :date, :weight_kg, :calories_kcal, :steps,
                 :sleep_hours, :resting_hr_bpm, :workout_type, :workout_duration_min
             )
             """,
-            rows,
+            tagged,
         )
         conn.commit()

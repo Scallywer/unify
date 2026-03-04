@@ -2,16 +2,19 @@ import os
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Query, UploadFile, File
+from fastapi import FastAPI, Depends, Request, Query, UploadFile, File, HTTPException, status
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 
-from models import IngestPayload
+from models import IngestPayload, AuthRequest
+from auth import get_current_user, hash_password, verify_password, create_access_token
 from database import (
     init_db, insert_metric, insert_metrics_batch,
     get_all_metrics, get_daily_metrics, get_workouts, get_dates_with_data,
+    create_user, get_user_by_username,
+    get_user_goals, set_user_goals,
+    get_user_profile, set_user_profile,
 )
 
 load_dotenv()
@@ -27,71 +30,6 @@ METRIC_MAP = {
     "heartrate": "resting_hr_bpm",
 }
 
-# Config file paths (persisted alongside the DB)
-_data_dir = Path(os.getenv("DB_PATH", "./data/health.db")).resolve().parent
-
-GOALS_FILE = _data_dir / "goals.json"
-DEFAULT_GOALS = {
-    "steps": 10000,
-    "calories": 2000,
-    "sleep": 7,
-    "target_weight_kg": None,
-}
-
-PROFILE_FILE = _data_dir / "profile.json"
-DEFAULT_PROFILE = {
-    "height_cm": 175,
-    "age": 30,
-    "sex": "male",
-}
-
-
-def _load_json(path: Path, defaults: dict) -> dict:
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return defaults.copy()
-
-
-def _save_json(path: Path, data: dict):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
-
-
-def _load_goals():
-    return _load_json(GOALS_FILE, DEFAULT_GOALS)
-
-
-def _save_goals(goals: dict):
-    _save_json(GOALS_FILE, goals)
-
-
-def _load_profile():
-    return _load_json(PROFILE_FILE, DEFAULT_PROFILE)
-
-
-def _save_profile(profile: dict):
-    _save_json(PROFILE_FILE, profile)
-
-
-def _migrate_goals_to_profile():
-    """One-time migration: move profile fields out of goals.json into profile.json."""
-    if not GOALS_FILE.exists():
-        return
-    goals = _load_json(GOALS_FILE, DEFAULT_GOALS)
-    profile_keys = ("height_cm", "age", "sex")
-    migrated = False
-    for key in profile_keys:
-        if key in goals:
-            profile = _load_profile()
-            profile[key] = goals.pop(key)
-            _save_profile(profile)
-            migrated = True
-    if migrated:
-        _save_goals(goals)
-
 # Resolve frontend directory
 # In Docker: backend files are at /app/, frontend at /app/frontend/
 # In dev: backend/ and frontend/ are siblings under the project root
@@ -102,10 +40,9 @@ FRONTEND_DIR = _this_dir / "frontend" if (_this_dir / "frontend").exists() else 
 @app.on_event("startup")
 def startup():
     init_db()
-    _migrate_goals_to_profile()
 
 
-# --- Dashboard ---
+# --- Dashboard (unauthenticated — HTML is static) ---
 
 @app.get("/")
 def serve_dashboard():
@@ -116,10 +53,40 @@ def serve_dashboard():
     return {"error": "Dashboard not found. Create frontend/index.html."}
 
 
+# --- Auth endpoints (unauthenticated) ---
+
+@app.post("/api/auth/register")
+def register(body: AuthRequest):
+    """Create a new user account."""
+    existing = get_user_by_username(body.username)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already taken",
+        )
+    hashed = hash_password(body.password)
+    user_id = create_user(body.username, hashed)
+    token = create_access_token(user_id)
+    return {"status": "ok", "token": token, "username": body.username}
+
+
+@app.post("/api/auth/login")
+def login(body: AuthRequest):
+    """Authenticate and return a JWT token."""
+    user = get_user_by_username(body.username)
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
+    token = create_access_token(user["id"])
+    return {"status": "ok", "token": token, "username": user["username"]}
+
+
 # --- Ingest endpoints ---
 
 @app.post("/api/ingest")
-def ingest(payload: IngestPayload):
+def ingest(payload: IngestPayload, user: dict = Depends(get_current_user)):
     date = payload.timestamp[:10]
     data = {
         "timestamp": payload.timestamp,
@@ -132,12 +99,12 @@ def ingest(payload: IngestPayload):
         "workout_type": payload.workout_type,
         "workout_duration_min": payload.workout_duration_min,
     }
-    insert_metric(data)
+    insert_metric(data, user_id=user["id"])
     return {"status": "ok"}
 
 
 @app.post("/api/ingest/batch")
-def ingest_batch(payloads: list[IngestPayload]):
+def ingest_batch(payloads: list[IngestPayload], user: dict = Depends(get_current_user)):
     """Ingest multiple metric records in a single request.
 
     Used by the Android app to efficiently upload many days at once.
@@ -157,26 +124,20 @@ def ingest_batch(payloads: list[IngestPayload]):
             "workout_duration_min": payload.workout_duration_min,
         })
     if rows:
-        insert_metrics_batch(rows)
+        insert_metrics_batch(rows, user_id=user["id"])
     return {"status": "ok", "inserted": len(rows)}
 
 
 @app.get("/api/data/dates")
-def get_data_dates():
+def get_data_dates(user: dict = Depends(get_current_user)):
     """Return all dates that have data. Used by the app to decide what to sync."""
-    return get_dates_with_data()
+    return get_dates_with_data(user_id=user["id"])
 
 
 @app.post("/api/health-connect/{metric}")
-async def ingest_health_connect(metric: str, request: Request):
+async def ingest_health_connect(metric: str, request: Request, user: dict = Depends(get_current_user)):
     """
     Accept raw TaskerHealthConnect plugin output for a single aggregate metric.
-
-    Tasker config per metric:
-      Action 1: Plugin -> Tasker Health Connect -> Read Aggregated Data
-                metric: e.g. StepsRecord.COUNT_TOTAL
-      Action 2: HTTP POST to /api/health-connect/steps
-                body: %healthconnectresult
 
     Supported metric paths: steps, weight, calories, sleep, heartrate
     """
@@ -209,66 +170,66 @@ async def ingest_health_connect(metric: str, request: Request):
     else:
         data[column] = float(value)
 
-    insert_metric(data)
+    insert_metric(data, user_id=user["id"])
     return {"status": "ok", "metric": metric, "value": data[column]}
 
 
 # --- Read endpoints ---
 
 @app.get("/api/data")
-def get_data():
-    return get_all_metrics()
+def get_data(user: dict = Depends(get_current_user)):
+    return get_all_metrics(user_id=user["id"])
 
 
 @app.get("/api/data/daily")
-def get_data_daily(days: int = Query(default=30, ge=1, le=365)):
+def get_data_daily(days: int = Query(default=30, ge=1, le=365), user: dict = Depends(get_current_user)):
     """Return daily aggregated metrics for the last N days."""
-    return get_daily_metrics(days)
+    return get_daily_metrics(days, user_id=user["id"])
 
 
 @app.get("/api/data/workouts")
-def get_data_workouts(days: int = Query(default=30, ge=1, le=365)):
+def get_data_workouts(days: int = Query(default=30, ge=1, le=365), user: dict = Depends(get_current_user)):
     """Return recent workout entries."""
-    return get_workouts(days)
+    return get_workouts(days, user_id=user["id"])
 
 
-# --- Goals config ---
+# --- Goals config (per-user, stored in DB) ---
 
 @app.get("/api/goals")
-def get_goals():
+def get_goals(user: dict = Depends(get_current_user)):
     """Return current goal settings."""
-    return _load_goals()
+    return get_user_goals(user["id"])
 
 
 @app.post("/api/goals")
-async def set_goals(request: Request):
+async def set_goals(request: Request, user: dict = Depends(get_current_user)):
     """Update goal settings. Accepts partial updates."""
     body = await request.json()
-    goals = _load_goals()
+    goals = get_user_goals(user["id"])
     for key in ("steps", "calories", "sleep", "target_weight_kg"):
         if key in body:
             goals[key] = body[key]
-    _save_goals(goals)
+    set_user_goals(user["id"], goals)
     return {"status": "ok", "goals": goals}
 
 
-# --- Profile config ---
+# --- Profile config (per-user, stored in DB) ---
 
 @app.get("/api/profile")
-def get_profile():
+def get_profile(user: dict = Depends(get_current_user)):
     """Return profile / body measurements."""
-    return _load_profile()
+    return get_user_profile(user["id"])
 
 
 @app.post("/api/profile")
-async def set_profile(request: Request):
+async def set_profile(request: Request, user: dict = Depends(get_current_user)):
     """Update profile measurements. Accepts partial updates."""
     body = await request.json()
-    profile = _load_profile()
+    profile = get_user_profile(user["id"])
     for key in ("height_cm", "age", "sex"):
         if key in body:
             profile[key] = body[key]
-    _save_profile(profile)
+    set_user_profile(user["id"], profile)
     return {"status": "ok", "profile": profile}
 
 
@@ -278,7 +239,7 @@ IMPORT_TIMESTAMP_MARKER = "T12:00:00+00:00"
 
 
 @app.post("/api/import/health-connect")
-async def import_health_connect_db(file: UploadFile = File(...)):
+async def import_health_connect_db(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """Upload a Health Connect export .db file and import its data.
 
     Deduplication: any previously imported rows (identified by the
@@ -288,6 +249,8 @@ async def import_health_connect_db(file: UploadFile = File(...)):
     import sqlite3
     import tempfile
     from datetime import date as dt_date, timedelta
+
+    user_id = user["id"]
 
     # Save uploaded file to a temp location
     contents = await file.read()
@@ -388,16 +351,15 @@ async def import_health_connect_db(file: UploadFile = File(...)):
         from database import get_connection
 
         with get_connection() as conn:
-            # Find which import dates already exist (by marker timestamp)
+            # Find which import dates already exist (by marker timestamp) for this user
             all_dates = sorted(data_by_day.keys())
-            placeholders = ",".join("?" for _ in all_dates)
             marker_timestamps = [f"{d}{IMPORT_TIMESTAMP_MARKER}" for d in all_dates]
 
             existing_import = set(
                 row[0] for row in conn.execute(
                     f"SELECT DISTINCT date FROM metrics "
-                    f"WHERE timestamp IN ({','.join('?' for _ in marker_timestamps)})",
-                    marker_timestamps,
+                    f"WHERE user_id = ? AND timestamp IN ({','.join('?' for _ in marker_timestamps)})",
+                    [user_id] + marker_timestamps,
                 ).fetchall()
             )
 
@@ -407,8 +369,8 @@ async def import_health_connect_db(file: UploadFile = File(...)):
                 del_markers = [f"{d}{IMPORT_TIMESTAMP_MARKER}" for d in existing_import]
                 del_placeholders = ",".join("?" for _ in del_markers)
                 cursor = conn.execute(
-                    f"DELETE FROM metrics WHERE timestamp IN ({del_placeholders})",
-                    del_markers,
+                    f"DELETE FROM metrics WHERE user_id = ? AND timestamp IN ({del_placeholders})",
+                    [user_id] + del_markers,
                 )
                 replaced = cursor.rowcount
 
@@ -420,10 +382,11 @@ async def import_health_connect_db(file: UploadFile = File(...)):
                     continue
                 conn.execute(
                     """INSERT INTO metrics
-                       (timestamp, date, weight_kg, calories_kcal, steps,
+                       (user_id, timestamp, date, weight_kg, calories_kcal, steps,
                         sleep_hours, resting_hr_bpm, workout_type, workout_duration_min)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
                     (
+                        user_id,
                         f"{d}{IMPORT_TIMESTAMP_MARKER}",
                         d,
                         day.get("weight_kg"),
@@ -480,39 +443,23 @@ def _calc_bmr(weight_kg: float, height_cm: float, age: int, sex: str) -> float:
 
 
 def _calc_walking_calories(steps: int, weight_kg: float, height_cm: float) -> float:
-    """Estimate net calories burned from walking using distance-based formula.
-
-    stride_length = height_cm * 0.414  (ACSM standard)
-    distance_km = steps * stride_m / 1000
-    net_calories = 0.5 * weight_kg * distance_km  (Margaria's walking energy cost)
-
-    Returns net walking calories (above resting).
-    """
+    """Estimate net calories burned from walking using distance-based formula."""
     stride_m = height_cm * 0.414 / 100
     distance_km = steps * stride_m / 1000
     return 0.5 * weight_kg * distance_km
 
 
 @app.get("/api/data/deficit")
-def get_deficit(days: int = Query(default=30, ge=1, le=365)):
-    """Calculate TDEE and calorie deficit/surplus for each day.
-
-    TDEE = BMR + Walking Calories + TEF + NEAT overhead
-
-    Components:
-    - BMR: Mifflin-St Jeor equation (weight, height, age, sex)
-    - Walking: Margaria's 0.5 kcal/kg/km using height-based stride length
-    - TEF: Thermic Effect of Food = 10% of calories consumed
-    - NEAT: Non-Exercise Activity Thermogenesis overhead = 12% of BMR
-    """
-    goals = _load_goals()
-    profile = _load_profile()
+def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depends(get_current_user)):
+    """Calculate TDEE and calorie deficit/surplus for each day."""
+    goals = get_user_goals(user["id"])
+    profile = get_user_profile(user["id"])
     height_cm = profile.get("height_cm", 175)
     age = profile.get("age", 30)
     sex = profile.get("sex", "male")
     target_weight_kg = goals.get("target_weight_kg")
 
-    daily = get_daily_metrics(days)
+    daily = get_daily_metrics(days, user_id=user["id"])
 
     daily_breakdown = []
     deficits = []
@@ -543,7 +490,7 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365)):
             if calories is not None:
                 tef = 0.1 * calories
             else:
-                tef = 0.1 * bmr  # rough estimate when no food data
+                tef = 0.1 * bmr
             entry["tef"] = round(tef)
 
             # TDEE = BMR + Walking + TEF + NEAT
@@ -568,7 +515,6 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365)):
 
         # Time to target
         if target_weight_kg is not None:
-            # Use latest weight
             latest_weight = None
             for day in reversed(daily):
                 if day.get("weight_kg") is not None:

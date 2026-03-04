@@ -1379,8 +1379,8 @@ function updateCards(daily, deficitData, period) {
     const latestDef = deficitData.daily[deficitData.daily.length - 1];
     if (latestDef.deficit != null) {
       const d = latestDef.deficit;
-      const sign = d >= 0 ? '+' : '';
-      document.getElementById('card-deficit').textContent = sign + d.toLocaleString();
+      // Don't show + sign for deficits - just show the number
+      document.getElementById('card-deficit').textContent = d.toLocaleString();
       const el = document.getElementById('card-deficit-sub');
       const detail = `TDEE ${latestDef.tdee} \u2022 ${latestDef.distance_km || 0} km`;
       if (d > 0) {
@@ -1666,8 +1666,12 @@ function updateTdeeChart(deficitData) {
               
               if (d.deficit != null) {
                 const def = d.deficit;
-                const sign = def >= 0 ? '+' : '';
-                lines.push(``, `Balance: ${sign}${def} kcal (${def >= 0 ? 'deficit' : 'surplus'})`);
+                // Show deficit without + sign, surplus with - sign
+                if (def >= 0) {
+                  lines.push(``, `Balance: ${def} kcal deficit`);
+                } else {
+                  lines.push(``, `Balance: ${Math.abs(def)} kcal surplus`);
+                }
               } else if (d.calories_consumed != null && d.calories_incomplete === true) {
                 lines.push(``, `Balance: Not calculated (incomplete data)`);
               }
@@ -1753,8 +1757,12 @@ function updateDeficitChart(deficitData) {
           callbacks: {
             label: function(item) {
               const v = item.raw;
-              const sign = v >= 0 ? '+' : '';
-              return `${sign}${v} kcal (${v >= 0 ? 'deficit' : 'surplus'})`;
+              // Show deficit without + sign, surplus with - sign
+              if (v >= 0) {
+                return `${v} kcal deficit`;
+              } else {
+                return `${Math.abs(v)} kcal surplus`;
+              }
             }
           }
         }

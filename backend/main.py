@@ -663,15 +663,29 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
             tdee = bmr + walking + workout_calories + tef + neat
             entry["tdee"] = round(tdee)
 
-            # Always include calories_consumed (null if missing) for chart consistency
+            # Flag incomplete calorie days and exclude from deficit calculation
+            # Any value under 1400 kcal is considered inadmissible (incomplete data)
+            MIN_VALID_CALORIES = 1400
+            
             if calories is not None:
                 entry["calories_consumed"] = calories
-                deficit = tdee - calories
-                entry["deficit"] = round(deficit)
-                entry["weekly_kg_change"] = round(deficit * 7 / 7700, 2)
-                deficits.append(deficit)
+                
+                # Check if calories are incomplete/inadmissible
+                if calories < MIN_VALID_CALORIES:
+                    entry["calories_incomplete"] = True
+                    entry["calories_incomplete_reason"] = f"Below minimum threshold ({calories} < {MIN_VALID_CALORIES} kcal)"
+                    # Don't include in deficit calculation
+                else:
+                    entry["calories_incomplete"] = False
+                    # Calculate deficit only for complete calorie days
+                    deficit = tdee - calories
+                    entry["deficit"] = round(deficit)
+                    entry["weekly_kg_change"] = round(deficit * 7 / 7700, 2)
+                    deficits.append(deficit)
             else:
                 entry["calories_consumed"] = None
+                entry["calories_incomplete"] = True
+                entry["calories_incomplete_reason"] = "No calorie data reported"
 
         daily_breakdown.append(entry)
 

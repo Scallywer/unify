@@ -1580,6 +1580,8 @@ function updateTdeeChart(deficitData) {
   const tdeeValues = daysWithData.map(d => d.tdee);
   // Explicitly handle null/undefined for calories_consumed
   const consumedValues = daysWithData.map(d => (d.calories_consumed != null ? d.calories_consumed : null));
+  // Mark incomplete calorie days for visual styling
+  const incompleteFlags = daysWithData.map(d => d.calories_incomplete === true);
   const breakdowns = daysWithData;
 
   if (tdeeChart) tdeeChart.destroy();
@@ -1615,13 +1617,15 @@ function updateTdeeChart(deficitData) {
         {
           label: 'Consumed',
           data: consumedValues,
-          borderColor: '#f39c12',
-          backgroundColor: 'rgba(243, 156, 18, 0.08)',
+          borderColor: consumedValues.map((v, i) => incompleteFlags[i] ? '#95a5a6' : '#f39c12'),
+          backgroundColor: consumedValues.map((v, i) => incompleteFlags[i] ? 'rgba(149, 165, 166, 0.08)' : 'rgba(243, 156, 18, 0.08)'),
           fill: false,
           tension: 0.3,
-          pointRadius: daysWithData.length > 60 ? 0 : 4,
+          pointRadius: daysWithData.length > 60 ? 0 : consumedValues.map((v, i) => incompleteFlags[i] ? 6 : 4),
           pointHoverRadius: 6,
+          pointStyle: consumedValues.map((v, i) => incompleteFlags[i] ? 'triangle' : 'circle'),
           borderWidth: 2.5,
+          borderDash: consumedValues.map((v, i) => incompleteFlags[i] ? [4, 4] : []),
           spanGaps: false, // Don't connect across null values
         }
       ]
@@ -1643,6 +1647,14 @@ function updateTdeeChart(deficitData) {
               const lines = [];
               
               lines.push(`TDEE: ${d.tdee} kcal`);
+              
+              // Show incomplete calorie warning if applicable
+              if (d.calories_incomplete === true) {
+                const reason = d.calories_incomplete_reason || 'Incomplete calorie data';
+                lines.push(``, `⚠ ${reason}`);
+                lines.push(`(Excluded from deficit calculation)`);
+              }
+              
               lines.push(``);
               lines.push(
                 `BMR: ${d.bmr || '--'} kcal`,
@@ -1656,6 +1668,8 @@ function updateTdeeChart(deficitData) {
                 const def = d.deficit;
                 const sign = def >= 0 ? '+' : '';
                 lines.push(``, `Balance: ${sign}${def} kcal (${def >= 0 ? 'deficit' : 'surplus'})`);
+              } else if (d.calories_consumed != null && d.calories_incomplete === true) {
+                lines.push(``, `Balance: Not calculated (incomplete data)`);
               }
               return lines;
             }
@@ -1699,6 +1713,7 @@ function updateDeficitChart(deficitData) {
     banner.style.display = 'none';
   }
 
+  // Only include days with valid deficit calculations (exclude incomplete calorie days)
   const daysWithData = daily.filter(d => d.deficit != null);
   const labels = daysWithData.map(d => d.label || formatDate(d.date));
   const deficitValues = daysWithData.map(d => d.deficit);

@@ -242,6 +242,7 @@ def ingest_batch(payloads: list[IngestPayload], user: dict = Depends(get_current
             "date": date,
             "weight_kg": payload.weight_kg,
             "calories_kcal": payload.calories_kcal,
+            "calories_burned_kcal": None,  # Not available from ingest API
             "steps": payload.steps,
             "sleep_hours": payload.sleep_hours,
             "resting_hr_bpm": payload.resting_hr_bpm,
@@ -283,6 +284,7 @@ async def ingest_health_connect(metric: str, request: Request, user: dict = Depe
         "date": now.strftime("%Y-%m-%d"),
         "weight_kg": None,
         "calories_kcal": None,
+        "calories_burned_kcal": None,
         "steps": None,
         "sleep_hours": None,
         "resting_hr_bpm": None,
@@ -428,7 +430,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 ensure_day(d)
                 data_by_day[d]["weight_kg"] = round(row[1] / 1000.0, 2)
 
-        # Calories (cal -> kcal)
+        # Calories consumed (cal -> kcal) from nutrition
         if "nutrition_record_table" in tables:
             for row in hc.execute(
                 "SELECT local_date, SUM(energy) FROM nutrition_record_table "
@@ -439,6 +441,18 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 if kcal > 0:
                     ensure_day(d)
                     data_by_day[d]["calories_kcal"] = kcal
+
+        # Total calories burned (cal -> kcal) from total_calories_burned_record_table
+        if "total_calories_burned_record_table" in tables:
+            for row in hc.execute(
+                "SELECT local_date, SUM(energy) FROM total_calories_burned_record_table "
+                "WHERE energy IS NOT NULL GROUP BY local_date"
+            ):
+                d = epoch_days_to_date(row[0])
+                kcal = int(round(row[1] / 1000.0))
+                if kcal > 0:
+                    ensure_day(d)
+                    data_by_day[d]["calories_burned_kcal"] = kcal
 
         # Sleep (ms -> hours)
         if "sleep_session_record_table" in tables:
@@ -575,15 +589,16 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                     continue
                 conn.execute(
                     """INSERT INTO metrics
-                       (user_id, timestamp, date, weight_kg, calories_kcal, steps,
+                       (user_id, timestamp, date, weight_kg, calories_kcal, calories_burned_kcal, steps,
                         sleep_hours, resting_hr_bpm, workout_type, workout_duration_min)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
                     (
                         user_id,
                         f"{d}{IMPORT_TIMESTAMP_MARKER}",
                         d,
                         day.get("weight_kg"),
                         day.get("calories_kcal"),
+                        day.get("calories_burned_kcal"),
                         day.get("steps"),
                         day.get("sleep_hours"),
                         day.get("resting_hr_bpm"),
@@ -622,6 +637,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 "steps": sum(1 for d in data_by_day.values() if "steps" in d),
                 "weight": sum(1 for d in data_by_day.values() if "weight_kg" in d),
                 "calories": sum(1 for d in data_by_day.values() if "calories_kcal" in d),
+                "calories_burned": sum(1 for d in data_by_day.values() if "calories_burned_kcal" in d),
                 "sleep": sum(1 for d in data_by_day.values() if "sleep_hours" in d),
                 "heart_rate": sum(1 for d in data_by_day.values() if "resting_hr_bpm" in d),
                 "workouts": len(workout_dates),

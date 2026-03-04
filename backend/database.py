@@ -54,6 +54,7 @@ def init_db():
                 date TEXT NOT NULL,
                 weight_kg REAL,
                 calories_kcal INTEGER,
+                calories_burned_kcal INTEGER,
                 steps INTEGER,
                 sleep_hours REAL,
                 resting_hr_bpm INTEGER,
@@ -63,6 +64,11 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        
+        # Migration: add calories_burned_kcal column if missing
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
+        if "calories_burned_kcal" not in cols:
+            conn.execute("ALTER TABLE metrics ADD COLUMN calories_burned_kcal INTEGER")
         
         # Migration: add user_id column if missing (existing DBs)
         # Must happen BEFORE creating the index
@@ -167,10 +173,10 @@ def insert_metric(data: dict, user_id: int):
         conn.execute(
             """
             INSERT INTO metrics (
-                user_id, timestamp, date, weight_kg, calories_kcal, steps,
+                user_id, timestamp, date, weight_kg, calories_kcal, calories_burned_kcal, steps,
                 sleep_hours, resting_hr_bpm, workout_type, workout_duration_min
             ) VALUES (
-                :user_id, :timestamp, :date, :weight_kg, :calories_kcal, :steps,
+                :user_id, :timestamp, :date, :weight_kg, :calories_kcal, :calories_burned_kcal, :steps,
                 :sleep_hours, :resting_hr_bpm, :workout_type, :workout_duration_min
             )
             """,
@@ -201,6 +207,7 @@ def get_daily_metrics(days: int = 30, *, user_id: int):
                 date,
                 AVG(weight_kg) AS weight_kg,
                 MAX(calories_kcal) AS calories_kcal,
+                MAX(calories_burned_kcal) AS calories_burned_kcal,
                 MAX(steps) AS steps,
                 AVG(sleep_hours) AS sleep_hours,
                 AVG(resting_hr_bpm) AS resting_hr_bpm
@@ -313,10 +320,10 @@ def insert_metrics_batch(rows: list[dict], user_id: int):
         conn.executemany(
             """
             INSERT INTO metrics (
-                user_id, timestamp, date, weight_kg, calories_kcal, steps,
+                user_id, timestamp, date, weight_kg, calories_kcal, calories_burned_kcal, steps,
                 sleep_hours, resting_hr_bpm, workout_type, workout_duration_min
             ) VALUES (
-                :user_id, :timestamp, :date, :weight_kg, :calories_kcal, :steps,
+                :user_id, :timestamp, :date, :weight_kg, :calories_kcal, :calories_burned_kcal, :steps,
                 :sleep_hours, :resting_hr_bpm, :workout_type, :workout_duration_min
             )
             """,

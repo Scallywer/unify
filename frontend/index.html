@@ -2,11 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>document.documentElement.setAttribute('data-theme', localStorage.getItem('health-dash-theme') || 'dark');</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Health Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
-  :root {
+  /* Dark theme (default) */
+  :root, [data-theme="dark"] {
     --bg: #0f1117;
     --surface: #1a1d27;
     --surface2: #232735;
@@ -19,6 +21,27 @@
     --orange: #f39c12;
     --blue: #0984e3;
     --radius: 12px;
+    --chart-grid: #2d3040;
+    --chart-text: #8b8fa3;
+    --overlay-bg: rgba(0,0,0,0.65);
+  }
+
+  /* Light theme */
+  [data-theme="light"] {
+    --bg: #f3f4f8;
+    --surface: #ffffff;
+    --surface2: #ecedf2;
+    --border: #d8dae3;
+    --text: #1a1d27;
+    --text-dim: #6b7085;
+    --accent: #6c5ce7;
+    --green: #00a884;
+    --red: #d63031;
+    --orange: #e67e22;
+    --blue: #0770c7;
+    --chart-grid: #d8dae3;
+    --chart-text: #6b7085;
+    --overlay-bg: rgba(0,0,0,0.35);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -286,7 +309,7 @@
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.65);
+    background: var(--overlay-bg);
     z-index: 100;
     justify-content: center;
     align-items: center;
@@ -392,6 +415,31 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* Theme toggle */
+  .theme-toggle {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .theme-toggle:hover { color: var(--text); border-color: var(--accent); }
+
+  /* Smooth theme transition */
+  body, .card, .chart-section, .settings-panel, .import-modal,
+  .period-selector, .settings-toggle, .theme-toggle, .badge {
+    transition: background 0.25s, color 0.25s, border-color 0.25s;
+  }
+
   /* Responsive */
   @media (max-width: 600px) {
     body { padding: 12px; }
@@ -421,6 +469,7 @@
       <button class="settings-toggle" id="settingsToggle">&#9881; Goals</button>
       <button class="settings-toggle" id="profileToggle">&#128100; Profile</button>
       <button class="settings-toggle" id="importToggle">&#128229; Import</button>
+      <button class="theme-toggle" id="themeToggle" title="Toggle light/dark theme">&#127769;</button>
     </div>
   </div>
 
@@ -579,10 +628,34 @@ let weightChart = null;
 let caloriesStepsChart = null;
 let deficitChart = null;
 
+// --- Theme ---
+function getTheme() {
+  return localStorage.getItem('health-dash-theme') || 'dark';
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('health-dash-theme', theme);
+
+  // Update toggle icon
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.textContent = theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}';
+
+  // Update Chart.js defaults
+  const style = getComputedStyle(document.documentElement);
+  Chart.defaults.color = style.getPropertyValue('--chart-text').trim();
+  Chart.defaults.borderColor = style.getPropertyValue('--chart-grid').trim();
+}
+
+// Apply saved theme immediately (before paint)
+applyTheme(getTheme());
+
 // --- Chart.js defaults ---
-Chart.defaults.color = '#8b8fa3';
-Chart.defaults.borderColor = '#2d3040';
 Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+
+function chartGrid() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--chart-grid').trim();
+}
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -617,6 +690,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('profileToggle').addEventListener('click', () => {
     document.getElementById('profilePanel').classList.toggle('open');
     document.getElementById('settingsPanel').classList.remove('open');
+  });
+
+  // Theme toggle
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    const next = getTheme() === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    loadData(currentDays); // redraw charts with new colors
   });
 
   // Save goals
@@ -1002,7 +1082,7 @@ function updateWeightChart(daily) {
       scales: {
         x: { grid: { display: false } },
         y: {
-          grid: { color: '#2d3040' },
+          grid: { color: chartGrid() },
           ticks: { callback: v => v.toFixed(1) }
         }
       }
@@ -1062,7 +1142,7 @@ function updateCaloriesStepsChart(daily) {
         y: {
           type: 'linear',
           position: 'left',
-          grid: { color: '#2d3040' },
+          grid: { color: chartGrid() },
           title: { display: true, text: 'Calories', color: '#f39c12' },
         },
         y1: {
@@ -1207,14 +1287,14 @@ function updateDeficitChart(deficitData) {
         y: {
           type: 'linear',
           position: 'left',
-          grid: { color: '#2d3040' },
-          title: { display: true, text: 'Calories (kcal)', color: '#8b8fa3' }
+          grid: { color: chartGrid() },
+          title: { display: true, text: 'Calories (kcal)', color: chartGrid() }
         },
         yBar: {
           type: 'linear',
           position: 'right',
           grid: { drawOnChartArea: false },
-          title: { display: true, text: 'Deficit / Surplus', color: '#8b8fa3' },
+          title: { display: true, text: 'Deficit / Surplus', color: chartGrid() },
           ticks: {
             callback: v => (v >= 0 ? '+' : '') + v
           }

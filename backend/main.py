@@ -31,184 +31,6 @@ METRIC_MAP = {
     "heartrate": "resting_hr_bpm",
 }
 
-# Health Connect Exercise Type Constants Mapping
-# Based on androidx.health.connect.client.records.ExerciseSessionRecord.ExerciseType
-EXERCISE_TYPE_MAP = {
-    0: "OTHER_WORKOUT",
-    1: "BADMINTON",
-    2: "BASEBALL",
-    3: "BASKETBALL",
-    4: "BIKING",
-    5: "BIKING_STATIONARY",
-    6: "BOOT_CAMP",
-    7: "BOXING",
-    8: "CALISTHENICS",
-    9: "CRICKET",
-    10: "CROSS_COUNTRY_SKIING",
-    11: "CURLING",
-    12: "DANCING",
-    13: "DIVING",
-    14: "ELEVATOR",
-    15: "ELLIPTICAL",
-    16: "ERGOMETER",
-    17: "ESCALATOR",
-    18: "FENCING",
-    19: "FOOTBALL_AMERICAN",
-    20: "FOOTBALL_AUSTRALIAN",
-    21: "FOOTBALL_SOCCER",
-    22: "FRISBEE_DISC",
-    23: "GOLF",
-    24: "GUIDED_BREATHING",
-    25: "GYMNASTICS",
-    26: "HANDBALL",
-    27: "HIGH_INTENSITY_INTERVAL_TRAINING",
-    28: "HIKING",
-    29: "ICE_HOCKEY",
-    30: "ICE_SKATING",
-    31: "MARTIAL_ARTS",
-    32: "PADDLING",
-    33: "PARAGLIDING",
-    34: "PILATES",
-    35: "RACQUETBALL",
-    36: "ROCK_CLIMBING",
-    37: "ROWING",
-    38: "ROWING_MACHINE",
-    39: "RUGBY",
-    40: "RUNNING",
-    41: "RUNNING_JOGGING",
-    42: "RUNNING_SAND",
-    43: "RUNNING_TREADMILL",
-    44: "SAILING",
-    45: "SCUBA_DIVING",
-    46: "SKATEBOARDING",
-    47: "SKATING",
-    48: "SKIING",
-    49: "SNOWBOARDING",
-    50: "SNOWSHOEING",
-    51: "SOFTBALL",
-    52: "SQUASH",
-    53: "STAIR_CLIMBING",
-    54: "STAIR_CLIMBING_MACHINE",
-    55: "STANDUP_PADDLEBOARDING",
-    56: "STRENGTH_TRAINING",
-    57: "STRETCHING",
-    58: "SURFING",
-    59: "SWIMMING",
-    60: "SWIMMING_OPEN_WATER",
-    61: "SWIMMING_POOL",
-    62: "TABLE_TENNIS",
-    63: "TENNIS",
-    64: "VOLLEYBALL",
-    65: "VOLLEYBALL_BEACH",
-    66: "VOLLEYBALL_INDOOR",
-    67: "WAKEBOARDING",
-    68: "WALKING",
-    69: "WALKING_FITNESS",
-    70: "WALKING_NORDIC",
-    71: "WALKING_TREADMILL",
-    72: "WATER_POLO",
-    73: "WEIGHTLIFTING",
-    74: "WHEELCHAIR",
-    75: "WIND_SURFING",
-    76: "YOGA",
-    77: "CROSSFIT",
-    78: "KICKBOXING",
-    79: "KAYAKING",
-    80: "KITESURFING",
-    81: "PICKLEBALL",
-    82: "WALL_CLIMBING",
-    83: "WATER_FITNESS",
-    84: "WATER_SKIING",
-    85: "WATER_THERAPY",
-    86: "WRESTLING",
-}
-
-
-def map_exercise_type(exercise_type_raw) -> str:
-    """Convert Health Connect exercise type integer to human-readable string."""
-    if exercise_type_raw is None:
-        return "Exercise"
-    
-    # Try to convert to int if it's a string
-    try:
-        exercise_type_int = int(exercise_type_raw)
-        mapped = EXERCISE_TYPE_MAP.get(exercise_type_int, f"Exercise_{exercise_type_int}")
-        # Format: "RUNNING" -> "Running", "HIGH_INTENSITY_INTERVAL_TRAINING" -> "High Intensity Interval Training"
-        return format_exercise_name(mapped)
-    except (ValueError, TypeError):
-        # If it's already a string, format it
-        return format_exercise_name(str(exercise_type_raw))
-
-
-def format_exercise_name(name: str) -> str:
-    """Format exercise type name to be more readable.
-    
-    Examples:
-        "RUNNING" -> "Running"
-        "HIGH_INTENSITY_INTERVAL_TRAINING" -> "High Intensity Interval Training"
-        "BIKING_STATIONARY" -> "Biking Stationary"
-    """
-    if not name:
-        return "Exercise"
-    
-    # Replace underscores with spaces and title case
-    formatted = name.replace("_", " ").title()
-    return formatted
-
-
-def infer_exercise_type_from_title(title: str, default_type: str) -> str:
-    """Infer exercise type from title when it clearly indicates a different activity.
-    
-    This helps correct cases where Health Connect's exercise_type integer doesn't match
-    the actual activity described in the title. Only overrides when title is very specific.
-    """
-    if not title:
-        return default_type
-    
-    title_lower = title.lower()
-    
-    # Swimming-related terms (multiple languages) - be specific, avoid generic terms
-    swimming_terms = [
-        "swim", "swimming", "natation", "nado", "plivanje",
-        "backstroke", "breaststroke", "butterfly", "pool", "piscina", "bazen"
-    ]
-    # Only match if it's clearly swimming (not just "freestyle" which is generic)
-    if any(term in title_lower for term in swimming_terms):
-        return "Swimming"
-    
-    # Running-related terms
-    running_terms = ["run", "running", "jog", "jogging", "correr", "trčanje", "trcanje"]
-    if any(term in title_lower for term in running_terms):
-        return "Running"
-    
-    # Cycling/Biking terms
-    cycling_terms = ["bike", "biking", "cycle", "cycling", "bicikl", "bicikla", "vélo", "vožnja bicikla"]
-    if any(term in title_lower for term in cycling_terms):
-        return "Biking"
-    
-    # Strength training
-    strength_terms = ["strength", "weight", "weights", "gym", "sila", "snaga", "trening"]
-    if any(term in title_lower for term in strength_terms):
-        return "Strength Training"
-    
-    # Yoga
-    yoga_terms = ["yoga", "joga"]
-    if any(term in title_lower for term in yoga_terms):
-        return "Yoga"
-    
-    # Walking
-    walking_terms = ["walk", "walking", "hodanje", "marche"]
-    if any(term in title_lower for term in walking_terms):
-        return "Walking"
-    
-    # Generic exercise terms - keep default type, don't override
-    generic_terms = ["exercise", "vježbanje", "workout", "training", "freestyle"]
-    if any(term in title_lower for term in generic_terms):
-        # Generic terms don't indicate a specific activity, keep the mapped type
-        return default_type
-    
-    # If no match, return the default (mapped type)
-    return default_type
 
 # Resolve frontend directory
 # In Docker: backend files are at /app/, frontend at /app/frontend/
@@ -535,7 +357,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 has_title = "title" in workout_columns
                 
                 query = """
-                    SELECT local_date, exercise_type, start_time, end_time, (end_time - start_time) as duration_ms
+                    SELECT local_date, start_time, end_time, (end_time - start_time) as duration_ms
                 """
                 if has_title:
                     query += ", title"
@@ -548,23 +370,16 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 
                 for row in hc.execute(query):
                     d = epoch_days_to_date(row[0])
-                    exercise_type_raw = row[1]
-                    start_time = row[2]
-                    end_time = row[3]
-                    duration_ms = row[4]
-                    title = row[5] if len(row) > 5 else None
+                    start_time = row[1]
+                    end_time = row[2]
+                    duration_ms = row[3]
+                    title = row[4] if len(row) > 4 else None
                     
                     if duration_ms and duration_ms > 0:
                         duration_min = int(round(duration_ms / 60_000))
                         if duration_min > 0:
-                            # Map exercise type to readable string
-                            workout_type = map_exercise_type(exercise_type_raw)
-                            
-                            # Override with title-based inference if title suggests different activity
-                            if title:
-                                inferred_type = infer_exercise_type_from_title(title, workout_type)
-                                if inferred_type != workout_type:
-                                    workout_type = inferred_type
+                            # Use title directly, or default to "Exercise" if missing
+                            workout_type = title.strip() if title and title.strip() else "Exercise"
                             
                             # Extract workout calories from first record in total_calories_burned_record_table
                             # The first record that starts at the exercise start time contains the workout calories

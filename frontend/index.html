@@ -1767,45 +1767,16 @@ function updateWorkouts(workouts) {
 
   workouts.forEach(dayEntry => {
     const date = dayEntry.date;
-    const dayWorkouts = dayEntry.workouts || [];
-    const totalDuration = dayEntry.total_duration_min || 0;
-    const totalCalories = dayEntry.total_calories_burned;
+    const workoutType = dayEntry.workout_type || 'Unknown';
+    const duration = dayEntry.workout_duration_min != null ? `${dayEntry.workout_duration_min} min` : '--';
+    const calories = dayEntry.calories_burned != null ? `${dayEntry.calories_burned} kcal` : '--';
     
-    if (dayWorkouts.length === 0) {
-      // Fallback for old format
-      const dur = dayEntry.workout_duration_min != null ? `${dayEntry.workout_duration_min} min` : '--';
-      const type = dayEntry.workout_type || 'Unknown';
-      html += `<tr>
-        <td>${formatDate(date)}</td>
-        <td><span class="badge">${type}</span></td>
-        <td>${dur}</td>
-        <td>--</td>
-      </tr>`;
-    } else {
-      // Show each workout type in its own row
-      dayWorkouts.forEach((workout, idx) => {
-        const dur = workout.workout_duration_min != null ? `${workout.workout_duration_min} min` : '--';
-        const type = workout.workout_type || 'Unknown';
-        const cals = workout.calories_burned != null ? `${workout.calories_burned} kcal` : '--';
-        const rowClass = idx === 0 ? 'workout-day-start' : '';
-        html += `<tr class="${rowClass}">
-          <td>${idx === 0 ? formatDate(date) : ''}</td>
-          <td><span class="badge">${type}</span></td>
-          <td>${dur}</td>
-          <td>${cals}</td>
-        </tr>`;
-      });
-      
-      // Add total row if multiple workouts
-      if (dayWorkouts.length > 1) {
-        html += `<tr class="workout-total">
-          <td></td>
-          <td><strong>Total</strong></td>
-          <td><strong>${totalDuration} min</strong></td>
-          <td><strong>${totalCalories != null ? totalCalories + ' kcal' : '--'}</strong></td>
-        </tr>`;
-      }
-    }
+    html += `<tr>
+      <td>${formatDate(date)}</td>
+      <td><span class="badge">${workoutType}</span></td>
+      <td>${duration}</td>
+      <td>${calories}</td>
+    </tr>`;
   });
 
   html += '</tbody></table>';

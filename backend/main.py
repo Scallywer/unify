@@ -481,33 +481,47 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
 
         # Workouts/Exercise sessions - store individually
         workouts_to_import = []
+        # Get daily calories burned to attribute to workouts proportionally
+        daily_calories_burned = {}
+        daily_workout_durations = {}  # Track total workout duration per day
+        
         if "exercise_session_record_table" in tables:
             try:
-                # Get individual workout sessions (not aggregated)
-                # Try to get calories if available
-                workout_columns = [col[1] for col in hc.execute("PRAGMA table_info(exercise_session_record_table)").fetchall()]
-                has_calories = "total_energy_burned" in workout_columns or "calories" in workout_columns
-                
-                calories_col = "total_energy_burned" if "total_energy_burned" in workout_columns else ("calories" if "calories" in workout_columns else None)
-                
-                query = f"""
-                    SELECT local_date, exercise_type, 
-                           (end_time - start_time) as duration_ms
-                    """
-                if calories_col:
-                    query += f", {calories_col} as calories"
-                else:
-                    query += ", NULL as calories"
-                query += """
+                # First pass: collect all workouts and calculate total duration per day
+                for row in hc.execute("""
+                    SELECT local_date, exercise_type, (end_time - start_time) as duration_ms
                     FROM exercise_session_record_table
                     WHERE end_time > start_time
-                """
+                """):
+                    d = epoch_days_to_date(row[0])
+                    duration_ms = row[2]  # row[0]=date, row[1]=exercise_type, row[2]=duration_ms
+                    if duration_ms and duration_ms > 0:
+                        duration_min = int(round(duration_ms / 60_000))
+                        if duration_min > 0:
+                            if d not in daily_workout_durations:
+                                daily_workout_durations[d] = 0
+                            daily_workout_durations[d] += duration_min
                 
-                for row in hc.execute(query):
+                # Get daily calories burned
+                if "total_calories_burned_record_table" in tables:
+                    for row in hc.execute(
+                        "SELECT local_date, SUM(energy) FROM total_calories_burned_record_table "
+                        "WHERE energy IS NOT NULL GROUP BY local_date"
+                    ):
+                        d = epoch_days_to_date(row[0])
+                        kcal = int(round(row[1] / 1000.0))
+                        if kcal > 0:
+                            daily_calories_burned[d] = kcal
+                
+                # Second pass: import workouts and attribute calories proportionally
+                for row in hc.execute("""
+                    SELECT local_date, exercise_type, (end_time - start_time) as duration_ms
+                    FROM exercise_session_record_table
+                    WHERE end_time > start_time
+                """):
                     d = epoch_days_to_date(row[0])
                     exercise_type_raw = row[1]
                     duration_ms = row[2]
-                    calories_raw = row[3] if len(row) > 3 else None
                     
                     if duration_ms and duration_ms > 0:
                         duration_min = int(round(duration_ms / 60_000))
@@ -515,18 +529,14 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                             # Map exercise type to readable string
                             workout_type = map_exercise_type(exercise_type_raw)
                             
-                            # Convert calories (if in cal, convert to kcal)
+                            # Attribute calories proportionally based on duration
                             calories_burned = None
-                            if calories_raw is not None:
-                                try:
-                                    calories_val = float(calories_raw)
-                                    # Health Connect stores in kcal, but check if it's cal
-                                    if calories_val > 10000:  # Likely in cal, convert to kcal
-                                        calories_burned = int(round(calories_val / 1000))
-                                    else:
-                                        calories_burned = int(round(calories_val))
-                                except (ValueError, TypeError):
-                                    pass
+                            if d in daily_calories_burned and d in daily_workout_durations:
+                                total_daily_duration = daily_workout_durations[d]
+                                if total_daily_duration > 0:
+                                    # Proportion of daily calories = (workout duration / total workout duration) * daily calories
+                                    proportion = duration_min / total_daily_duration
+                                    calories_burned = int(round(proportion * daily_calories_burned[d]))
                             
                             workouts_to_import.append({
                                 "date": d,

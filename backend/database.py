@@ -235,7 +235,7 @@ def insert_workout(user_id: int, date: str, workout_type: str, duration_min: int
 
 
 def get_workouts(days: int = 7, *, user_id: int):
-    """Return recent workout entries grouped by date with totals."""
+    """Return recent workout entries - one row per day with aggregated data."""
     with get_connection() as conn:
         # Get all individual workouts
         rows = conn.execute(
@@ -248,29 +248,41 @@ def get_workouts(days: int = 7, *, user_id: int):
             {"user_id": user_id, "offset": f"-{days} days"},
         ).fetchall()
         
-        # Group by date
+        # Group by date and aggregate
         workouts_by_date = {}
         for row in rows:
             date = row[0]
+            workout_type = row[1]
+            duration_min = row[2]
+            calories_burned = row[3]
+            
             if date not in workouts_by_date:
-                workouts_by_date[date] = []
-            workouts_by_date[date].append({
-                "workout_type": row[1],
-                "workout_duration_min": row[2],
-                "calories_burned": row[3],
-            })
+                workouts_by_date[date] = {
+                    "workout_types": [],
+                    "total_duration_min": 0,
+                    "total_calories_burned": 0,
+                }
+            
+            # Add workout type to list (avoid duplicates)
+            if workout_type not in workouts_by_date[date]["workout_types"]:
+                workouts_by_date[date]["workout_types"].append(workout_type)
+            
+            # Sum durations and calories
+            workouts_by_date[date]["total_duration_min"] += duration_min or 0
+            workouts_by_date[date]["total_calories_burned"] += calories_burned or 0
         
-        # Format as list with totals
+        # Format as list - one row per day
         result = []
         for date in sorted(workouts_by_date.keys(), reverse=True):
-            workouts = workouts_by_date[date]
-            total_duration = sum(w["workout_duration_min"] for w in workouts)
-            total_calories = sum(w["calories_burned"] or 0 for w in workouts)
+            day_data = workouts_by_date[date]
+            # Combine workout types into comma-separated string
+            workout_types_str = ", ".join(sorted(day_data["workout_types"]))
+            
             result.append({
                 "date": date,
-                "workouts": workouts,
-                "total_duration_min": total_duration,
-                "total_calories_burned": total_calories if total_calories > 0 else None,
+                "workout_type": workout_types_str,
+                "workout_duration_min": day_data["total_duration_min"],
+                "calories_burned": day_data["total_calories_burned"] if day_data["total_calories_burned"] > 0 else None,
             })
         
         return result

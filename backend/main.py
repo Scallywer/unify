@@ -864,12 +864,14 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
             if calories_burned is not None:
                 # Use measured TDEE from total_calories_burned_record_table
                 tdee_measured = calories_burned
-                entry["tdee"] = round(tdee_measured)  # Primary TDEE (measured when available)
+                tdee = tdee_measured  # Primary TDEE (measured when available)
+                entry["tdee"] = round(tdee)
                 entry["tdee_measured"] = round(tdee_measured)
                 entry["tdee_measured_flag"] = True  # Flag to indicate measured is available
             else:
                 # No measured TDEE, use calculated
-                entry["tdee"] = round(tdee_calculated)  # Primary TDEE (calculated)
+                tdee = tdee_calculated  # Primary TDEE (calculated)
+                entry["tdee"] = round(tdee)
                 entry["tdee_measured"] = None
                 entry["tdee_measured_flag"] = False  # Flag to indicate no measured data
 

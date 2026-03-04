@@ -1,11 +1,11 @@
 import os
 import hashlib
+import bcrypt
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from database import get_user_by_id, get_user_by_username
 
@@ -17,27 +17,32 @@ ACCESS_TOKEN_EXPIRE_DAYS = 30
 
 # ── Password hashing ─────────────────────────────────────────
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def _prep_password(password: str) -> str:
+def _prep_password(password: str) -> bytes:
     """Pre-hash password with SHA-256 to handle bcrypt's 72-byte limit.
     
-    Returns a hex string (64 characters) which is well under bcrypt's 72-byte limit.
+    Returns 32 bytes (SHA-256 digest) which is well under bcrypt's 72-byte limit.
     """
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+    return hashlib.sha256(password.encode('utf-8')).digest()
 
 
 def hash_password(password: str) -> str:
+    """Hash a password using bcrypt with SHA-256 pre-hashing."""
     # Pre-hash to handle passwords longer than 72 bytes
     prepped = _prep_password(password)
-    return pwd_context.hash(prepped)
+    # Generate salt and hash
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(prepped, salt)
+    # Return as string (bcrypt returns bytes)
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain: str, hashed: str) -> bool:
+    """Verify a password against a bcrypt hash."""
     # Pre-hash to match what hash_password does
     prepped = _prep_password(plain)
-    return pwd_context.verify(prepped, hashed)
+    # bcrypt expects bytes
+    hashed_bytes = hashed.encode('utf-8')
+    return bcrypt.checkpw(prepped, hashed_bytes)
 
 
 # ── JWT helpers ───────────────────────────────────────────────

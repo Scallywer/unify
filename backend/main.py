@@ -324,15 +324,32 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
 
         # Sleep (ms -> hours)
         if "sleep_session_record_table" in tables:
-            for row in hc.execute(
-                "SELECT local_date, SUM(end_time - start_time) "
-                "FROM sleep_session_record_table GROUP BY local_date"
-            ):
-                d = epoch_days_to_date(row[0])
-                hours = round(row[1] / 3_600_000, 2)
-                if hours > 0:
-                    ensure_day(d)
-                    data_by_day[d]["sleep_hours"] = hours
+            try:
+                # Check if columns exist
+                sleep_columns = [col[1] for col in hc.execute("PRAGMA table_info(sleep_session_record_table)").fetchall()]
+                has_local_date = "local_date" in sleep_columns
+                has_start_time = "start_time" in sleep_columns
+                has_end_time = "end_time" in sleep_columns
+                
+                if has_local_date and has_start_time and has_end_time:
+                    for row in hc.execute(
+                        "SELECT local_date, SUM(end_time - start_time) "
+                        "FROM sleep_session_record_table "
+                        "WHERE end_time > start_time AND local_date IS NOT NULL "
+                        "GROUP BY local_date"
+                    ):
+                        d = epoch_days_to_date(row[0])
+                        total_ms = row[1]
+                        if total_ms and total_ms > 0:
+                            hours = round(total_ms / 3_600_000, 2)
+                            if hours > 0:
+                                ensure_day(d)
+                                data_by_day[d]["sleep_hours"] = hours
+                else:
+                    print(f"Warning: sleep_session_record_table missing required columns. Found: {sleep_columns}")
+            except sqlite3.OperationalError as e:
+                print(f"Warning: Could not read sleep_session_record_table: {e}")
+                # Continue without sleep data if table is missing or malformed
 
         # Heart rate (min bpm per day)
         if "heart_rate_record_series_table" in tables and "heart_rate_record_table" in tables:

@@ -63,13 +63,15 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON metrics(date)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON metrics(user_id)")
-
+        
         # Migration: add user_id column if missing (existing DBs)
+        # Must happen BEFORE creating the index
         cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
         if "user_id" not in cols:
             conn.execute("ALTER TABLE metrics ADD COLUMN user_id INTEGER REFERENCES users(id)")
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON metrics(date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON metrics(user_id)")
 
         conn.commit()
 

@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from models import IngestPayload
-from database import init_db, insert_metric, get_all_metrics, get_daily_metrics, get_workouts
+from database import (
+    init_db, insert_metric, insert_metrics_batch,
+    get_all_metrics, get_daily_metrics, get_workouts, get_dates_with_data,
+)
 
 load_dotenv()
 
@@ -131,6 +134,37 @@ def ingest(payload: IngestPayload):
     }
     insert_metric(data)
     return {"status": "ok"}
+
+
+@app.post("/api/ingest/batch")
+def ingest_batch(payloads: list[IngestPayload]):
+    """Ingest multiple metric records in a single request.
+
+    Used by the Android app to efficiently upload many days at once.
+    """
+    rows = []
+    for payload in payloads:
+        date = payload.timestamp[:10]
+        rows.append({
+            "timestamp": payload.timestamp,
+            "date": date,
+            "weight_kg": payload.weight_kg,
+            "calories_kcal": payload.calories_kcal,
+            "steps": payload.steps,
+            "sleep_hours": payload.sleep_hours,
+            "resting_hr_bpm": payload.resting_hr_bpm,
+            "workout_type": payload.workout_type,
+            "workout_duration_min": payload.workout_duration_min,
+        })
+    if rows:
+        insert_metrics_batch(rows)
+    return {"status": "ok", "inserted": len(rows)}
+
+
+@app.get("/api/data/dates")
+def get_data_dates():
+    """Return all dates that have data. Used by the app to decide what to sync."""
+    return get_dates_with_data()
 
 
 @app.post("/api/health-connect/{metric}")

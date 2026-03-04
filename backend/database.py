@@ -106,3 +106,30 @@ def get_workouts(days: int = 7):
             {"offset": f"-{days} days"},
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+def get_dates_with_data() -> list[str]:
+    """Return a sorted list of all dates that have at least one metric row."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT date FROM metrics ORDER BY date ASC"
+        ).fetchall()
+        return [row[0] for row in rows]
+
+
+def insert_metrics_batch(rows: list[dict]):
+    """Insert multiple metric rows in a single transaction."""
+    with get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO metrics (
+                timestamp, date, weight_kg, calories_kcal, steps,
+                sleep_hours, resting_hr_bpm, workout_type, workout_duration_min
+            ) VALUES (
+                :timestamp, :date, :weight_kg, :calories_kcal, :steps,
+                :sleep_hours, :resting_hr_bpm, :workout_type, :workout_duration_min
+            )
+            """,
+            rows,
+        )
+        conn.commit()

@@ -356,7 +356,12 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                     """
                 ):
                     d = epoch_days_to_date(row[0])
-                    exercise_type = row[1] or "Exercise"
+                    # Convert exercise_type to string (Health Connect may store as int)
+                    exercise_type_raw = row[1]
+                    if exercise_type_raw is None:
+                        exercise_type = "Exercise"
+                    else:
+                        exercise_type = str(exercise_type_raw)
                     duration_ms = row[2]
                     if duration_ms and duration_ms > 0:
                         duration_min = int(round(duration_ms / 60_000))
@@ -372,10 +377,10 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                     total_duration = sum(dur for _, dur in workouts)
                     # Combine types (e.g., "Running, Cycling" or just the longest one)
                     if len(workouts) == 1:
-                        workout_type = workouts[0][0]
+                        workout_type = str(workouts[0][0])
                     else:
-                        # Multiple workouts: list all types
-                        types = [wt for wt, _ in workouts]
+                        # Multiple workouts: list all types (ensure all are strings)
+                        types = [str(wt) for wt, _ in workouts]
                         workout_type = ", ".join(sorted(set(types)))
                     
                     data_by_day[d]["workout_type"] = workout_type

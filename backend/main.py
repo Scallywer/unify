@@ -787,6 +787,7 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
         weight = day.get("weight_kg")
         steps = day.get("steps")
         calories = day.get("calories_kcal")
+        calories_burned = day.get("calories_burned_kcal")  # Measured TDEE from Health Connect
 
         # Use extrapolated weight if missing
         if weight is None:
@@ -837,13 +838,21 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
                 tef = 0.1 * bmr
             entry["tef"] = round(tef)
 
-            # TDEE = BMR + Walking + TEF + NEAT
-            # Note: Workout calories are NOT added here because:
-            # 1. Health Connect doesn't provide per-workout calories in exports
-            # 2. total_calories_burned_record_table already includes workout calories in the total
-            # 3. Adding them would cause double-counting
-            tdee = bmr + walking + tef + neat
-            entry["tdee"] = round(tdee)
+            # Use measured TDEE from Health Connect if available, otherwise calculate
+            if calories_burned is not None:
+                # Use measured TDEE from total_calories_burned_record_table
+                tdee = calories_burned
+                entry["tdee"] = round(tdee)
+                entry["tdee_measured"] = True  # Flag to indicate this is measured, not calculated
+            else:
+                # Calculate TDEE = BMR + Walking + TEF + NEAT
+                # Note: Workout calories are NOT added here because:
+                # 1. Health Connect doesn't provide per-workout calories in exports
+                # 2. total_calories_burned_record_table already includes workout calories in the total
+                # 3. Adding them would cause double-counting
+                tdee = bmr + walking + tef + neat
+                entry["tdee"] = round(tdee)
+                entry["tdee_measured"] = False  # Flag to indicate this is calculated
 
             # Always include calories_consumed (null if missing) for chart consistency
             if calories is not None:

@@ -1577,7 +1577,9 @@ function updateTdeeChart(deficitData) {
   const daily = deficitData.daily || [];
   const daysWithData = daily.filter(d => d.tdee != null);
   const labels = daysWithData.map(d => d.label || formatDate(d.date));
-  const tdeeValues = daysWithData.map(d => d.tdee);
+  // Split TDEE into measured (from Health Connect) and calculated
+  const tdeeMeasured = daysWithData.map(d => d.tdee_measured ? d.tdee : null);
+  const tdeeCalculated = daysWithData.map(d => d.tdee_measured ? null : d.tdee);
   // Explicitly handle null/undefined for calories_consumed
   const consumedValues = daysWithData.map(d => (d.calories_consumed != null ? d.calories_consumed : null));
   const breakdowns = daysWithData;
@@ -1601,8 +1603,8 @@ function updateTdeeChart(deficitData) {
       labels,
       datasets: [
         {
-          label: 'TDEE (estimated)',
-          data: tdeeValues,
+          label: 'TDEE (measured)',
+          data: tdeeMeasured,
           borderColor: '#00b894',
           backgroundColor: 'rgba(0, 184, 148, 0.08)',
           fill: false,
@@ -1610,7 +1612,20 @@ function updateTdeeChart(deficitData) {
           pointRadius: daysWithData.length > 60 ? 0 : 4,
           pointHoverRadius: 6,
           borderWidth: 2.5,
-          borderDash: [6, 3],
+          spanGaps: false, // Don't connect across null values
+        },
+        {
+          label: 'TDEE (calculated)',
+          data: tdeeCalculated,
+          borderColor: '#74b9ff',
+          backgroundColor: 'rgba(116, 185, 255, 0.08)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: daysWithData.length > 60 ? 0 : 4,
+          pointHoverRadius: 6,
+          borderWidth: 2.5,
+          borderDash: [6, 3], // Dashed line for calculated
+          spanGaps: false,
         },
         {
           label: 'Consumed',
@@ -1642,12 +1657,18 @@ function updateTdeeChart(deficitData) {
               const d = breakdowns[idx];
               const lines = [
                 ``,
-                `BMR: ${d.bmr || '--'} kcal`,
-                `Walking: ${d.walking_calories || 0} kcal (${d.distance_km || 0} km)`,
-                `Workouts: ${d.workout_calories || 0} kcal`,
-                `TEF: ${d.tef || 0} kcal`,
-                `NEAT: ${d.neat || 0} kcal`,
+                d.tdee_measured ? `TDEE: ${d.tdee} kcal (measured from Health Connect)` : `TDEE: ${d.tdee} kcal (calculated)`,
               ];
+              if (!d.tdee_measured) {
+                // Show breakdown only for calculated TDEE
+                lines.push(
+                  `BMR: ${d.bmr || '--'} kcal`,
+                  `Walking: ${d.walking_calories || 0} kcal (${d.distance_km || 0} km)`,
+                  `Workouts: ${d.workout_calories || 0} kcal`,
+                  `TEF: ${d.tef || 0} kcal`,
+                  `NEAT: ${d.neat || 0} kcal`
+                );
+              }
               if (d.deficit != null) {
                 const def = d.deficit;
                 const sign = def >= 0 ? '+' : '';

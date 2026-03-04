@@ -1577,9 +1577,7 @@ function updateTdeeChart(deficitData) {
   const daily = deficitData.daily || [];
   const daysWithData = daily.filter(d => d.tdee != null);
   const labels = daysWithData.map(d => d.label || formatDate(d.date));
-  // Show both measured and calculated TDEE simultaneously for comparison
-  const tdeeMeasured = daysWithData.map(d => d.tdee_measured != null ? d.tdee_measured : null);
-  const tdeeCalculated = daysWithData.map(d => d.tdee_calculated != null ? d.tdee_calculated : d.tdee);
+  const tdeeValues = daysWithData.map(d => d.tdee);
   // Explicitly handle null/undefined for calories_consumed
   const consumedValues = daysWithData.map(d => (d.calories_consumed != null ? d.calories_consumed : null));
   const breakdowns = daysWithData;
@@ -1603,20 +1601,8 @@ function updateTdeeChart(deficitData) {
       labels,
       datasets: [
         {
-          label: 'TDEE (measured)',
-          data: tdeeMeasured,
-          borderColor: '#00b894',
-          backgroundColor: 'rgba(0, 184, 148, 0.08)',
-          fill: false,
-          tension: 0.3,
-          pointRadius: daysWithData.length > 60 ? 0 : 4,
-          pointHoverRadius: 6,
-          borderWidth: 2.5,
-          spanGaps: false, // Don't connect across null values
-        },
-        {
-          label: 'TDEE (calculated)',
-          data: tdeeCalculated,
+          label: 'TDEE',
+          data: tdeeValues,
           borderColor: '#74b9ff',
           backgroundColor: 'rgba(116, 185, 255, 0.08)',
           fill: false,
@@ -1624,7 +1610,6 @@ function updateTdeeChart(deficitData) {
           pointRadius: daysWithData.length > 60 ? 0 : 4,
           pointHoverRadius: 6,
           borderWidth: 2.5,
-          borderDash: [6, 3], // Dashed line for calculated
           spanGaps: false,
         },
         {
@@ -1657,16 +1642,7 @@ function updateTdeeChart(deficitData) {
               const d = breakdowns[idx];
               const lines = [];
               
-              if (d.tdee_measured != null) {
-                lines.push(`TDEE (measured): ${d.tdee_measured} kcal`);
-                lines.push(`TDEE (calculated): ${d.tdee_calculated || d.tdee} kcal`);
-                const diff = d.tdee_measured - (d.tdee_calculated || d.tdee);
-                const diffSign = diff >= 0 ? '+' : '';
-                lines.push(`Difference: ${diffSign}${Math.round(diff)} kcal`);
-              } else {
-                lines.push(`TDEE (calculated): ${d.tdee_calculated || d.tdee} kcal`);
-              }
-              
+              lines.push(`TDEE: ${d.tdee} kcal`);
               lines.push(``);
               lines.push(
                 `BMR: ${d.bmr || '--'} kcal`,

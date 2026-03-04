@@ -497,17 +497,8 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                     ensure_day(d)
                     data_by_day[d]["calories_kcal"] = kcal
 
-        # Total calories burned (cal -> kcal) from total_calories_burned_record_table
-        if "total_calories_burned_record_table" in tables:
-            for row in hc.execute(
-                "SELECT local_date, SUM(energy) FROM total_calories_burned_record_table "
-                "WHERE energy IS NOT NULL GROUP BY local_date"
-            ):
-                d = epoch_days_to_date(row[0])
-                kcal = int(round(row[1] / 1000.0))
-                if kcal > 0:
-                    ensure_day(d)
-                    data_by_day[d]["calories_burned_kcal"] = kcal
+        # Note: total_calories_burned_record_table data is flawed and not used
+        # We only use it to extract workout calories from first record per exercise session
 
         # Sleep (ms -> hours)
         if "sleep_session_record_table" in tables:
@@ -666,7 +657,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                         d,
                         day.get("weight_kg"),
                         day.get("calories_kcal"),
-                        day.get("calories_burned_kcal"),
+                        None,  # calories_burned_kcal not imported (flawed data)
                         day.get("steps"),
                         day.get("sleep_hours"),
                         day.get("resting_hr_bpm"),
@@ -705,7 +696,6 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 "steps": sum(1 for d in data_by_day.values() if "steps" in d),
                 "weight": sum(1 for d in data_by_day.values() if "weight_kg" in d),
                 "calories": sum(1 for d in data_by_day.values() if "calories_kcal" in d),
-                "calories_burned": sum(1 for d in data_by_day.values() if "calories_burned_kcal" in d),
                 "sleep": sum(1 for d in data_by_day.values() if "sleep_hours" in d),
                 "heart_rate": sum(1 for d in data_by_day.values() if "resting_hr_bpm" in d),
                 "workouts": len(workout_dates),
@@ -804,7 +794,6 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
         weight = day.get("weight_kg")
         steps = day.get("steps")
         calories = day.get("calories_kcal")
-        calories_burned = day.get("calories_burned_kcal")  # Measured TDEE from Health Connect
 
         # Use extrapolated weight if missing
         if weight is None:
@@ -853,27 +842,11 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
                 tef = 0.1 * bmr
             entry["tef"] = round(tef)
 
-            # Always calculate TDEE for comparison
             # Calculate TDEE = BMR + Walking + Workout Calories + TEF + NEAT
-            # Workout calories are now extracted from the first record in total_calories_burned_record_table
+            # Workout calories are extracted from the first record in total_calories_burned_record_table
             # that starts at the exercise start time, which contains the actual workout calories
-            tdee_calculated = bmr + walking + workout_calories + tef + neat
-            entry["tdee_calculated"] = round(tdee_calculated)
-            
-            # Use measured TDEE from Health Connect if available, otherwise use calculated
-            if calories_burned is not None:
-                # Use measured TDEE from total_calories_burned_record_table
-                tdee_measured = calories_burned
-                tdee = tdee_measured  # Primary TDEE (measured when available)
-                entry["tdee"] = round(tdee)
-                entry["tdee_measured"] = round(tdee_measured)
-                entry["tdee_measured_flag"] = True  # Flag to indicate measured is available
-            else:
-                # No measured TDEE, use calculated
-                tdee = tdee_calculated  # Primary TDEE (calculated)
-                entry["tdee"] = round(tdee)
-                entry["tdee_measured"] = None
-                entry["tdee_measured_flag"] = False  # Flag to indicate no measured data
+            tdee = bmr + walking + workout_calories + tef + neat
+            entry["tdee"] = round(tdee)
 
             # Always include calories_consumed (null if missing) for chart consistency
             if calories is not None:

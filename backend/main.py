@@ -155,6 +155,54 @@ def format_exercise_name(name: str) -> str:
     formatted = name.replace("_", " ").title()
     return formatted
 
+
+def infer_exercise_type_from_title(title: str, default_type: str) -> str:
+    """Infer exercise type from title when it clearly indicates a different activity.
+    
+    This helps correct cases where Health Connect's exercise_type integer doesn't match
+    the actual activity described in the title.
+    """
+    if not title:
+        return default_type
+    
+    title_lower = title.lower()
+    
+    # Swimming-related terms (multiple languages)
+    swimming_terms = [
+        "swim", "swimming", "natation", "nado", "plivanje", "vježbanje slobodnim",
+        "freestyle", "backstroke", "breaststroke", "butterfly", "pool", "piscina"
+    ]
+    if any(term in title_lower for term in swimming_terms):
+        return "Swimming"
+    
+    # Running-related terms
+    running_terms = ["run", "running", "jog", "jogging", "correr", "trčanje", "trcanje"]
+    if any(term in title_lower for term in running_terms):
+        return "Running"
+    
+    # Cycling/Biking terms
+    cycling_terms = ["bike", "biking", "cycle", "cycling", "bicikl", "bicikla", "vélo"]
+    if any(term in title_lower for term in cycling_terms):
+        return "Biking"
+    
+    # Strength training
+    strength_terms = ["strength", "weight", "weights", "gym", "sila", "snaga"]
+    if any(term in title_lower for term in strength_terms):
+        return "Strength Training"
+    
+    # Yoga
+    yoga_terms = ["yoga", "joga"]
+    if any(term in title_lower for term in yoga_terms):
+        return "Yoga"
+    
+    # Walking
+    walking_terms = ["walk", "walking", "hodanje", "marche"]
+    if any(term in title_lower for term in walking_terms):
+        return "Walking"
+    
+    # If no match, return the default (mapped type)
+    return default_type
+
 # Resolve frontend directory
 # In Docker: backend files are at /app/, frontend at /app/frontend/
 # In dev: backend/ and frontend/ are siblings under the project root
@@ -514,20 +562,39 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                             daily_calories_burned[d] = kcal
                 
                 # Second pass: import workouts and attribute calories proportionally
-                for row in hc.execute("""
+                # Get title field if available
+                workout_columns = [col[1] for col in hc.execute("PRAGMA table_info(exercise_session_record_table)").fetchall()]
+                has_title = "title" in workout_columns
+                
+                query = """
                     SELECT local_date, exercise_type, (end_time - start_time) as duration_ms
+                """
+                if has_title:
+                    query += ", title"
+                else:
+                    query += ", NULL as title"
+                query += """
                     FROM exercise_session_record_table
                     WHERE end_time > start_time
-                """):
+                """
+                
+                for row in hc.execute(query):
                     d = epoch_days_to_date(row[0])
                     exercise_type_raw = row[1]
                     duration_ms = row[2]
+                    title = row[3] if len(row) > 3 else None
                     
                     if duration_ms and duration_ms > 0:
                         duration_min = int(round(duration_ms / 60_000))
                         if duration_min > 0:
                             # Map exercise type to readable string
                             workout_type = map_exercise_type(exercise_type_raw)
+                            
+                            # Override with title-based inference if title suggests different activity
+                            if title:
+                                inferred_type = infer_exercise_type_from_title(title, workout_type)
+                                if inferred_type != workout_type:
+                                    workout_type = inferred_type
                             
                             # Attribute calories proportionally based on duration
                             calories_burned = None

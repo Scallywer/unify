@@ -1376,8 +1376,17 @@ function updateCards(daily, deficitData, period) {
 
   // Calorie Balance (deficit/surplus)
   if (deficitData && deficitData.daily && deficitData.daily.length > 0) {
-    const latestDef = deficitData.daily[deficitData.daily.length - 1];
-    if (latestDef.deficit != null) {
+    // Find the most recent day with a valid deficit (not incomplete)
+    let latestDef = null;
+    for (let i = deficitData.daily.length - 1; i >= 0; i--) {
+      const day = deficitData.daily[i];
+      if (day.deficit != null && day.calories_incomplete !== true) {
+        latestDef = day;
+        break;
+      }
+    }
+    
+    if (latestDef && latestDef.deficit != null) {
       const d = latestDef.deficit;
       // Deficit shows with minus, surplus with plus
       const sign = d >= 0 ? '-' : '+';
@@ -1775,7 +1784,14 @@ function updateDeficitChart(deficitData) {
           grid: { color: chartGrid() },
           title: { display: true, text: 'kcal', color: chartGrid() },
           ticks: {
-            callback: v => (v >= 0 ? '+' : '') + v
+            // Show deficits with minus sign, surplus with plus, but keep bars going up
+            callback: function(v) {
+              if (v >= 0) {
+                return '-' + v; // Deficit shown as negative
+              } else {
+                return '+' + Math.abs(v); // Surplus shown as positive
+              }
+            }
           }
         }
       }

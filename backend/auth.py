@@ -20,9 +20,12 @@ ACCESS_TOKEN_EXPIRE_DAYS = 30
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def _prep_password(password: str) -> bytes:
-    """Pre-hash password with SHA-256 to handle bcrypt's 72-byte limit."""
-    return hashlib.sha256(password.encode('utf-8')).digest()
+def _prep_password(password: str) -> str:
+    """Pre-hash password with SHA-256 to handle bcrypt's 72-byte limit.
+    
+    Returns a hex string (64 characters) which is well under bcrypt's 72-byte limit.
+    """
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 
 def hash_password(password: str) -> str:

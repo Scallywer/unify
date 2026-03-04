@@ -160,18 +160,19 @@ def infer_exercise_type_from_title(title: str, default_type: str) -> str:
     """Infer exercise type from title when it clearly indicates a different activity.
     
     This helps correct cases where Health Connect's exercise_type integer doesn't match
-    the actual activity described in the title.
+    the actual activity described in the title. Only overrides when title is very specific.
     """
     if not title:
         return default_type
     
     title_lower = title.lower()
     
-    # Swimming-related terms (multiple languages)
+    # Swimming-related terms (multiple languages) - be specific, avoid generic terms
     swimming_terms = [
-        "swim", "swimming", "natation", "nado", "plivanje", "vježbanje slobodnim",
-        "freestyle", "backstroke", "breaststroke", "butterfly", "pool", "piscina"
+        "swim", "swimming", "natation", "nado", "plivanje",
+        "backstroke", "breaststroke", "butterfly", "pool", "piscina", "bazen"
     ]
+    # Only match if it's clearly swimming (not just "freestyle" which is generic)
     if any(term in title_lower for term in swimming_terms):
         return "Swimming"
     
@@ -181,12 +182,12 @@ def infer_exercise_type_from_title(title: str, default_type: str) -> str:
         return "Running"
     
     # Cycling/Biking terms
-    cycling_terms = ["bike", "biking", "cycle", "cycling", "bicikl", "bicikla", "vélo"]
+    cycling_terms = ["bike", "biking", "cycle", "cycling", "bicikl", "bicikla", "vélo", "vožnja bicikla"]
     if any(term in title_lower for term in cycling_terms):
         return "Biking"
     
     # Strength training
-    strength_terms = ["strength", "weight", "weights", "gym", "sila", "snaga"]
+    strength_terms = ["strength", "weight", "weights", "gym", "sila", "snaga", "trening"]
     if any(term in title_lower for term in strength_terms):
         return "Strength Training"
     
@@ -199,6 +200,12 @@ def infer_exercise_type_from_title(title: str, default_type: str) -> str:
     walking_terms = ["walk", "walking", "hodanje", "marche"]
     if any(term in title_lower for term in walking_terms):
         return "Walking"
+    
+    # Generic exercise terms - keep default type, don't override
+    generic_terms = ["exercise", "vježbanje", "workout", "training", "freestyle"]
+    if any(term in title_lower for term in generic_terms):
+        # Generic terms don't indicate a specific activity, keep the mapped type
+        return default_type
     
     # If no match, return the default (mapped type)
     return default_type

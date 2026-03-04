@@ -838,21 +838,27 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
                 tef = 0.1 * bmr
             entry["tef"] = round(tef)
 
-            # Use measured TDEE from Health Connect if available, otherwise calculate
+            # Always calculate TDEE for comparison
+            # Calculate TDEE = BMR + Walking + TEF + NEAT
+            # Note: Workout calories are NOT added here because:
+            # 1. Health Connect doesn't provide per-workout calories in exports
+            # 2. total_calories_burned_record_table already includes workout calories in the total
+            # 3. Adding them would cause double-counting
+            tdee_calculated = bmr + walking + tef + neat
+            entry["tdee_calculated"] = round(tdee_calculated)
+            
+            # Use measured TDEE from Health Connect if available, otherwise use calculated
             if calories_burned is not None:
                 # Use measured TDEE from total_calories_burned_record_table
-                tdee = calories_burned
-                entry["tdee"] = round(tdee)
-                entry["tdee_measured"] = True  # Flag to indicate this is measured, not calculated
+                tdee_measured = calories_burned
+                entry["tdee"] = round(tdee_measured)  # Primary TDEE (measured when available)
+                entry["tdee_measured"] = round(tdee_measured)
+                entry["tdee_measured_flag"] = True  # Flag to indicate measured is available
             else:
-                # Calculate TDEE = BMR + Walking + TEF + NEAT
-                # Note: Workout calories are NOT added here because:
-                # 1. Health Connect doesn't provide per-workout calories in exports
-                # 2. total_calories_burned_record_table already includes workout calories in the total
-                # 3. Adding them would cause double-counting
-                tdee = bmr + walking + tef + neat
-                entry["tdee"] = round(tdee)
-                entry["tdee_measured"] = False  # Flag to indicate this is calculated
+                # No measured TDEE, use calculated
+                entry["tdee"] = round(tdee_calculated)  # Primary TDEE (calculated)
+                entry["tdee_measured"] = None
+                entry["tdee_measured_flag"] = False  # Flag to indicate no measured data
 
             # Always include calories_consumed (null if missing) for chart consistency
             if calories is not None:

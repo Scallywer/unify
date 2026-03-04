@@ -1577,9 +1577,9 @@ function updateTdeeChart(deficitData) {
   const daily = deficitData.daily || [];
   const daysWithData = daily.filter(d => d.tdee != null);
   const labels = daysWithData.map(d => d.label || formatDate(d.date));
-  // Split TDEE into measured (from Health Connect) and calculated
-  const tdeeMeasured = daysWithData.map(d => d.tdee_measured ? d.tdee : null);
-  const tdeeCalculated = daysWithData.map(d => d.tdee_measured ? null : d.tdee);
+  // Show both measured and calculated TDEE simultaneously for comparison
+  const tdeeMeasured = daysWithData.map(d => d.tdee_measured != null ? d.tdee_measured : null);
+  const tdeeCalculated = daysWithData.map(d => d.tdee_calculated != null ? d.tdee_calculated : d.tdee);
   // Explicitly handle null/undefined for calories_consumed
   const consumedValues = daysWithData.map(d => (d.calories_consumed != null ? d.calories_consumed : null));
   const breakdowns = daysWithData;
@@ -1655,20 +1655,27 @@ function updateTdeeChart(deficitData) {
             afterBody: function(items) {
               const idx = items[0].dataIndex;
               const d = breakdowns[idx];
-              const lines = [
-                ``,
-                d.tdee_measured ? `TDEE: ${d.tdee} kcal (measured from Health Connect)` : `TDEE: ${d.tdee} kcal (calculated)`,
-              ];
-              if (!d.tdee_measured) {
-                // Show breakdown only for calculated TDEE
-                lines.push(
-                  `BMR: ${d.bmr || '--'} kcal`,
-                  `Walking: ${d.walking_calories || 0} kcal (${d.distance_km || 0} km)`,
-                  `Workouts: ${d.workout_calories || 0} kcal`,
-                  `TEF: ${d.tef || 0} kcal`,
-                  `NEAT: ${d.neat || 0} kcal`
-                );
+              const lines = [];
+              
+              if (d.tdee_measured != null) {
+                lines.push(`TDEE (measured): ${d.tdee_measured} kcal`);
+                lines.push(`TDEE (calculated): ${d.tdee_calculated || d.tdee} kcal`);
+                const diff = d.tdee_measured - (d.tdee_calculated || d.tdee);
+                const diffSign = diff >= 0 ? '+' : '';
+                lines.push(`Difference: ${diffSign}${Math.round(diff)} kcal`);
+              } else {
+                lines.push(`TDEE (calculated): ${d.tdee_calculated || d.tdee} kcal`);
               }
+              
+              lines.push(``);
+              lines.push(
+                `BMR: ${d.bmr || '--'} kcal`,
+                `Walking: ${d.walking_calories || 0} kcal (${d.distance_km || 0} km)`,
+                `Workouts: ${d.workout_calories || 0} kcal`,
+                `TEF: ${d.tef || 0} kcal`,
+                `NEAT: ${d.neat || 0} kcal`
+              );
+              
               if (d.deficit != null) {
                 const def = d.deficit;
                 const sign = def >= 0 ? '+' : '';

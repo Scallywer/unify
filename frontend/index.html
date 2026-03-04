@@ -1348,9 +1348,17 @@ function updateCards(daily, deficitData, period) {
     setSubNeutral('card-steps-sub', 'No data');
   }
 
-  // Sleep
-  if (current && current.sleep_hours != null) {
-    const sl = current.sleep_hours;
+  // Sleep - find most recent day with sleep data
+  let sleepDay = null;
+  for (let i = daily.length - 1; i >= 0; i--) {
+    if (daily[i].sleep_hours != null) {
+      sleepDay = daily[i];
+      break;
+    }
+  }
+  
+  if (sleepDay && sleepDay.sleep_hours != null) {
+    const sl = sleepDay.sleep_hours;
     document.getElementById('card-sleep').textContent = sl.toFixed(1) + ' hrs';
     const el = document.getElementById('card-sleep-sub');
     if (sl >= GOALS.sleep) {

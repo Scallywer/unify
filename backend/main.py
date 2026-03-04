@@ -24,32 +24,70 @@ METRIC_MAP = {
     "heartrate": "resting_hr_bpm",
 }
 
-# Goals config file path (persisted alongside the DB)
+# Config file paths (persisted alongside the DB)
 _data_dir = Path(os.getenv("DB_PATH", "./data/health.db")).resolve().parent
+
 GOALS_FILE = _data_dir / "goals.json"
 DEFAULT_GOALS = {
     "steps": 10000,
     "calories": 2000,
     "sleep": 7,
-    "height_cm": 175,
-    "age": 30,
-    "sex": "male",
     "target_weight_kg": None,
 }
 
+PROFILE_FILE = _data_dir / "profile.json"
+DEFAULT_PROFILE = {
+    "height_cm": 175,
+    "age": 30,
+    "sex": "male",
+}
 
-def _load_goals():
-    if GOALS_FILE.exists():
+
+def _load_json(path: Path, defaults: dict) -> dict:
+    if path.exists():
         try:
-            return json.loads(GOALS_FILE.read_text())
+            return json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
             pass
-    return DEFAULT_GOALS.copy()
+    return defaults.copy()
+
+
+def _save_json(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+
+
+def _load_goals():
+    return _load_json(GOALS_FILE, DEFAULT_GOALS)
 
 
 def _save_goals(goals: dict):
-    GOALS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GOALS_FILE.write_text(json.dumps(goals, indent=2))
+    _save_json(GOALS_FILE, goals)
+
+
+def _load_profile():
+    return _load_json(PROFILE_FILE, DEFAULT_PROFILE)
+
+
+def _save_profile(profile: dict):
+    _save_json(PROFILE_FILE, profile)
+
+
+def _migrate_goals_to_profile():
+    """One-time migration: move profile fields out of goals.json into profile.json."""
+    if not GOALS_FILE.exists():
+        return
+    goals = _load_json(GOALS_FILE, DEFAULT_GOALS)
+    profile_keys = ("height_cm", "age", "sex")
+    migrated = False
+    for key in profile_keys:
+        if key in goals:
+            profile = _load_profile()
+            profile[key] = goals.pop(key)
+            _save_profile(profile)
+            migrated = True
+    if migrated:
+        _save_goals(goals)
 
 # Resolve frontend directory
 # In Docker: backend files are at /app/, frontend at /app/frontend/
@@ -61,6 +99,7 @@ FRONTEND_DIR = _this_dir / "frontend" if (_this_dir / "frontend").exists() else 
 @app.on_event("startup")
 def startup():
     init_db()
+    _migrate_goals_to_profile()
 
 
 # --- Dashboard ---
@@ -172,11 +211,31 @@ async def set_goals(request: Request):
     """Update goal settings. Accepts partial updates."""
     body = await request.json()
     goals = _load_goals()
-    for key in ("steps", "calories", "sleep", "height_cm", "age", "sex", "target_weight_kg"):
+    for key in ("steps", "calories", "sleep", "target_weight_kg"):
         if key in body:
             goals[key] = body[key]
     _save_goals(goals)
     return {"status": "ok", "goals": goals}
+
+
+# --- Profile config ---
+
+@app.get("/api/profile")
+def get_profile():
+    """Return profile / body measurements."""
+    return _load_profile()
+
+
+@app.post("/api/profile")
+async def set_profile(request: Request):
+    """Update profile measurements. Accepts partial updates."""
+    body = await request.json()
+    profile = _load_profile()
+    for key in ("height_cm", "age", "sex"):
+        if key in body:
+            profile[key] = body[key]
+    _save_profile(profile)
+    return {"status": "ok", "profile": profile}
 
 
 # --- Health Connect DB Import ---
@@ -413,9 +472,10 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365)):
     - NEAT: Non-Exercise Activity Thermogenesis overhead = 12% of BMR
     """
     goals = _load_goals()
-    height_cm = goals.get("height_cm", 175)
-    age = goals.get("age", 30)
-    sex = goals.get("sex", "male")
+    profile = _load_profile()
+    height_cm = profile.get("height_cm", 175)
+    age = profile.get("age", 30)
+    sex = profile.get("sex", "male")
     target_weight_kg = goals.get("target_weight_kg")
 
     daily = get_daily_metrics(days)

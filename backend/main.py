@@ -340,6 +340,50 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 ensure_day(d)
                 data_by_day[d]["resting_hr_bpm"] = int(row[1])
 
+        # Workouts/Exercise sessions
+        if "exercise_session_record_table" in tables:
+            try:
+                # Get exercise type and duration per day
+                # If multiple workouts per day, sum durations and combine types
+                workout_by_day: dict[str, list[tuple[str, int]]] = {}
+                for row in hc.execute(
+                    """
+                    SELECT local_date, COALESCE(exercise_type, 'Exercise') as exercise_type, 
+                           SUM(end_time - start_time) as duration_ms
+                    FROM exercise_session_record_table
+                    WHERE end_time > start_time
+                    GROUP BY local_date, exercise_type
+                    """
+                ):
+                    d = epoch_days_to_date(row[0])
+                    exercise_type = row[1] or "Exercise"
+                    duration_ms = row[2]
+                    if duration_ms and duration_ms > 0:
+                        duration_min = int(round(duration_ms / 60_000))
+                        if duration_min > 0:
+                            if d not in workout_by_day:
+                                workout_by_day[d] = []
+                            workout_by_day[d].append((exercise_type, duration_min))
+                
+                # Aggregate workouts per day
+                for d, workouts in workout_by_day.items():
+                    ensure_day(d)
+                    # Sum all durations
+                    total_duration = sum(dur for _, dur in workouts)
+                    # Combine types (e.g., "Running, Cycling" or just the longest one)
+                    if len(workouts) == 1:
+                        workout_type = workouts[0][0]
+                    else:
+                        # Multiple workouts: list all types
+                        types = [wt for wt, _ in workouts]
+                        workout_type = ", ".join(sorted(set(types)))
+                    
+                    data_by_day[d]["workout_type"] = workout_type
+                    data_by_day[d]["workout_duration_min"] = total_duration
+            except sqlite3.OperationalError:
+                # Table exists but might have different schema - skip workouts
+                pass
+
         hc.close()
 
         if not data_by_day:
@@ -384,7 +428,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                     """INSERT INTO metrics
                        (user_id, timestamp, date, weight_kg, calories_kcal, steps,
                         sleep_hours, resting_hr_bpm, workout_type, workout_duration_min)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         user_id,
                         f"{d}{IMPORT_TIMESTAMP_MARKER}",
@@ -394,6 +438,8 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                         day.get("steps"),
                         day.get("sleep_hours"),
                         day.get("resting_hr_bpm"),
+                        day.get("workout_type"),
+                        day.get("workout_duration_min"),
                     ),
                 )
                 imported += 1
@@ -413,6 +459,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 "calories": sum(1 for d in data_by_day.values() if "calories_kcal" in d),
                 "sleep": sum(1 for d in data_by_day.values() if "sleep_hours" in d),
                 "heart_rate": sum(1 for d in data_by_day.values() if "resting_hr_bpm" in d),
+                "workouts": sum(1 for d in data_by_day.values() if "workout_type" in d),
             },
         }
 
@@ -497,12 +544,15 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
             tdee = bmr + walking + tef + neat
             entry["tdee"] = round(tdee)
 
+            # Always include calories_consumed (null if missing) for chart consistency
             if calories is not None:
                 entry["calories_consumed"] = calories
                 deficit = tdee - calories
                 entry["deficit"] = round(deficit)
                 entry["weekly_kg_change"] = round(deficit * 7 / 7700, 2)
                 deficits.append(deficit)
+            else:
+                entry["calories_consumed"] = None
 
         daily_breakdown.append(entry)
 

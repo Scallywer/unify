@@ -1202,6 +1202,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (m.calories) parts.push(`${m.calories}d calories`);
           if (m.sleep) parts.push(`${m.sleep}d sleep`);
           if (m.heart_rate) parts.push(`${m.heart_rate}d HR`);
+          if (m.workouts) parts.push(`${m.workouts}d workouts`);
           html += `Metrics: ${parts.join(', ')}`;
         }
         importResult.innerHTML = html;
@@ -1559,7 +1560,8 @@ function updateTdeeChart(deficitData) {
   const daysWithData = daily.filter(d => d.tdee != null);
   const labels = daysWithData.map(d => d.label || formatDate(d.date));
   const tdeeValues = daysWithData.map(d => d.tdee);
-  const consumedValues = daysWithData.map(d => d.calories_consumed || null);
+  // Explicitly handle null/undefined for calories_consumed
+  const consumedValues = daysWithData.map(d => (d.calories_consumed != null ? d.calories_consumed : null));
   const breakdowns = daysWithData;
 
   if (tdeeChart) tdeeChart.destroy();
@@ -1602,6 +1604,7 @@ function updateTdeeChart(deficitData) {
           pointRadius: daysWithData.length > 60 ? 0 : 4,
           pointHoverRadius: 6,
           borderWidth: 2.5,
+          spanGaps: false, // Don't connect across null values
         }
       ]
     },

@@ -15,6 +15,7 @@ from database import (
     create_user, get_user_by_username,
     get_user_goals, set_user_goals,
     get_user_profile, set_user_profile,
+    insert_workout, get_workouts_for_date_range,
 )
 
 load_dotenv()
@@ -29,6 +30,130 @@ METRIC_MAP = {
     "sleep": "sleep_hours",
     "heartrate": "resting_hr_bpm",
 }
+
+# Health Connect Exercise Type Constants Mapping
+# Based on androidx.health.connect.client.records.ExerciseSessionRecord.ExerciseType
+EXERCISE_TYPE_MAP = {
+    0: "OTHER_WORKOUT",
+    1: "BADMINTON",
+    2: "BASEBALL",
+    3: "BASKETBALL",
+    4: "BIKING",
+    5: "BIKING_STATIONARY",
+    6: "BOOT_CAMP",
+    7: "BOXING",
+    8: "CALISTHENICS",
+    9: "CRICKET",
+    10: "CROSS_COUNTRY_SKIING",
+    11: "CURLING",
+    12: "DANCING",
+    13: "DIVING",
+    14: "ELEVATOR",
+    15: "ELLIPTICAL",
+    16: "ERGOMETER",
+    17: "ESCALATOR",
+    18: "FENCING",
+    19: "FOOTBALL_AMERICAN",
+    20: "FOOTBALL_AUSTRALIAN",
+    21: "FOOTBALL_SOCCER",
+    22: "FRISBEE_DISC",
+    23: "GOLF",
+    24: "GUIDED_BREATHING",
+    25: "GYMNASTICS",
+    26: "HANDBALL",
+    27: "HIGH_INTENSITY_INTERVAL_TRAINING",
+    28: "HIKING",
+    29: "ICE_HOCKEY",
+    30: "ICE_SKATING",
+    31: "MARTIAL_ARTS",
+    32: "PADDLING",
+    33: "PARAGLIDING",
+    34: "PILATES",
+    35: "RACQUETBALL",
+    36: "ROCK_CLIMBING",
+    37: "ROWING",
+    38: "ROWING_MACHINE",
+    39: "RUGBY",
+    40: "RUNNING",
+    41: "RUNNING_JOGGING",
+    42: "RUNNING_SAND",
+    43: "RUNNING_TREADMILL",
+    44: "SAILING",
+    45: "SCUBA_DIVING",
+    46: "SKATEBOARDING",
+    47: "SKATING",
+    48: "SKIING",
+    49: "SNOWBOARDING",
+    50: "SNOWSHOEING",
+    51: "SOFTBALL",
+    52: "SQUASH",
+    53: "STAIR_CLIMBING",
+    54: "STAIR_CLIMBING_MACHINE",
+    55: "STANDUP_PADDLEBOARDING",
+    56: "STRENGTH_TRAINING",
+    57: "STRETCHING",
+    58: "SURFING",
+    59: "SWIMMING",
+    60: "SWIMMING_OPEN_WATER",
+    61: "SWIMMING_POOL",
+    62: "TABLE_TENNIS",
+    63: "TENNIS",
+    64: "VOLLEYBALL",
+    65: "VOLLEYBALL_BEACH",
+    66: "VOLLEYBALL_INDOOR",
+    67: "WAKEBOARDING",
+    68: "WALKING",
+    69: "WALKING_FITNESS",
+    70: "WALKING_NORDIC",
+    71: "WALKING_TREADMILL",
+    72: "WATER_POLO",
+    73: "WEIGHTLIFTING",
+    74: "WHEELCHAIR",
+    75: "WIND_SURFING",
+    76: "YOGA",
+    77: "CROSSFIT",
+    78: "KICKBOXING",
+    79: "KAYAKING",
+    80: "KITESURFING",
+    81: "PICKLEBALL",
+    82: "WALL_CLIMBING",
+    83: "WATER_FITNESS",
+    84: "WATER_SKIING",
+    85: "WATER_THERAPY",
+    86: "WRESTLING",
+}
+
+
+def map_exercise_type(exercise_type_raw) -> str:
+    """Convert Health Connect exercise type integer to human-readable string."""
+    if exercise_type_raw is None:
+        return "Exercise"
+    
+    # Try to convert to int if it's a string
+    try:
+        exercise_type_int = int(exercise_type_raw)
+        mapped = EXERCISE_TYPE_MAP.get(exercise_type_int, f"Exercise_{exercise_type_int}")
+        # Format: "RUNNING" -> "Running", "HIGH_INTENSITY_INTERVAL_TRAINING" -> "High Intensity Interval Training"
+        return format_exercise_name(mapped)
+    except (ValueError, TypeError):
+        # If it's already a string, format it
+        return format_exercise_name(str(exercise_type_raw))
+
+
+def format_exercise_name(name: str) -> str:
+    """Format exercise type name to be more readable.
+    
+    Examples:
+        "RUNNING" -> "Running"
+        "HIGH_INTENSITY_INTERVAL_TRAINING" -> "High Intensity Interval Training"
+        "BIKING_STATIONARY" -> "Biking Stationary"
+    """
+    if not name:
+        return "Exercise"
+    
+    # Replace underscores with spaces and title case
+    formatted = name.replace("_", " ").title()
+    return formatted
 
 # Resolve frontend directory
 # In Docker: backend files are at /app/, frontend at /app/frontend/
@@ -340,52 +465,62 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 ensure_day(d)
                 data_by_day[d]["resting_hr_bpm"] = int(row[1])
 
-        # Workouts/Exercise sessions
+        # Workouts/Exercise sessions - store individually
+        workouts_to_import = []
         if "exercise_session_record_table" in tables:
             try:
-                # Get exercise type and duration per day
-                # If multiple workouts per day, sum durations and combine types
-                workout_by_day: dict[str, list[tuple[str, int]]] = {}
-                for row in hc.execute(
+                # Get individual workout sessions (not aggregated)
+                # Try to get calories if available
+                workout_columns = [col[1] for col in hc.execute("PRAGMA table_info(exercise_session_record_table)").fetchall()]
+                has_calories = "total_energy_burned" in workout_columns or "calories" in workout_columns
+                
+                calories_col = "total_energy_burned" if "total_energy_burned" in workout_columns else ("calories" if "calories" in workout_columns else None)
+                
+                query = f"""
+                    SELECT local_date, exercise_type, 
+                           (end_time - start_time) as duration_ms
                     """
-                    SELECT local_date, COALESCE(exercise_type, 'Exercise') as exercise_type, 
-                           SUM(end_time - start_time) as duration_ms
+                if calories_col:
+                    query += f", {calories_col} as calories"
+                else:
+                    query += ", NULL as calories"
+                query += """
                     FROM exercise_session_record_table
                     WHERE end_time > start_time
-                    GROUP BY local_date, exercise_type
-                    """
-                ):
+                """
+                
+                for row in hc.execute(query):
                     d = epoch_days_to_date(row[0])
-                    # Convert exercise_type to string (Health Connect may store as int)
                     exercise_type_raw = row[1]
-                    if exercise_type_raw is None:
-                        exercise_type = "Exercise"
-                    else:
-                        exercise_type = str(exercise_type_raw)
                     duration_ms = row[2]
+                    calories_raw = row[3] if len(row) > 3 else None
+                    
                     if duration_ms and duration_ms > 0:
                         duration_min = int(round(duration_ms / 60_000))
                         if duration_min > 0:
-                            if d not in workout_by_day:
-                                workout_by_day[d] = []
-                            workout_by_day[d].append((exercise_type, duration_min))
-                
-                # Aggregate workouts per day
-                for d, workouts in workout_by_day.items():
-                    ensure_day(d)
-                    # Sum all durations
-                    total_duration = sum(dur for _, dur in workouts)
-                    # Combine types (e.g., "Running, Cycling" or just the longest one)
-                    if len(workouts) == 1:
-                        workout_type = str(workouts[0][0])
-                    else:
-                        # Multiple workouts: list all types (ensure all are strings)
-                        types = [str(wt) for wt, _ in workouts]
-                        workout_type = ", ".join(sorted(set(types)))
-                    
-                    data_by_day[d]["workout_type"] = workout_type
-                    data_by_day[d]["workout_duration_min"] = total_duration
-            except sqlite3.OperationalError:
+                            # Map exercise type to readable string
+                            workout_type = map_exercise_type(exercise_type_raw)
+                            
+                            # Convert calories (if in cal, convert to kcal)
+                            calories_burned = None
+                            if calories_raw is not None:
+                                try:
+                                    calories_val = float(calories_raw)
+                                    # Health Connect stores in kcal, but check if it's cal
+                                    if calories_val > 10000:  # Likely in cal, convert to kcal
+                                        calories_burned = int(round(calories_val / 1000))
+                                    else:
+                                        calories_burned = int(round(calories_val))
+                                except (ValueError, TypeError):
+                                    pass
+                            
+                            workouts_to_import.append({
+                                "date": d,
+                                "workout_type": workout_type,
+                                "duration_min": duration_min,
+                                "calories_burned": calories_burned,
+                            })
+            except sqlite3.OperationalError as e:
                 # Table exists but might have different schema - skip workouts
                 pass
 
@@ -423,7 +558,16 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 )
                 replaced = cursor.rowcount
 
-            # Insert fresh rows
+            # Delete old workouts for dates we're about to re-import
+            workout_dates = set(w["date"] for w in workouts_to_import)
+            if workout_dates:
+                workout_placeholders = ",".join("?" for _ in workout_dates)
+                conn.execute(
+                    f"DELETE FROM workouts WHERE user_id = ? AND date IN ({workout_placeholders})",
+                    [user_id] + list(workout_dates),
+                )
+
+            # Insert fresh metric rows
             imported = 0
             for d in all_dates:
                 day = data_by_day[d]
@@ -433,7 +577,7 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                     """INSERT INTO metrics
                        (user_id, timestamp, date, weight_kg, calories_kcal, steps,
                         sleep_hours, resting_hr_bpm, workout_type, workout_duration_min)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
                     (
                         user_id,
                         f"{d}{IMPORT_TIMESTAMP_MARKER}",
@@ -443,20 +587,36 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                         day.get("steps"),
                         day.get("sleep_hours"),
                         day.get("resting_hr_bpm"),
-                        day.get("workout_type"),
-                        day.get("workout_duration_min"),
                     ),
                 )
                 imported += 1
+
+            # Insert individual workouts
+            workouts_imported = 0
+            for workout in workouts_to_import:
+                conn.execute(
+                    """INSERT INTO workouts (user_id, date, workout_type, duration_min, calories_burned)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        user_id,
+                        workout["date"],
+                        workout["workout_type"],
+                        workout["duration_min"],
+                        workout["calories_burned"],
+                    ),
+                )
+                workouts_imported += 1
 
             conn.commit()
 
         os.unlink(tmp_path)
 
+        workout_dates = set(w["date"] for w in workouts_to_import)
         return {
             "status": "ok",
             "imported": imported,
             "replaced": replaced,
+            "workouts_imported": workouts_imported,
             "date_range": [all_dates[0], all_dates[-1]] if all_dates else None,
             "metrics": {
                 "steps": sum(1 for d in data_by_day.values() if "steps" in d),
@@ -464,7 +624,8 @@ async def import_health_connect_db(file: UploadFile = File(...), user: dict = De
                 "calories": sum(1 for d in data_by_day.values() if "calories_kcal" in d),
                 "sleep": sum(1 for d in data_by_day.values() if "sleep_hours" in d),
                 "heart_rate": sum(1 for d in data_by_day.values() if "resting_hr_bpm" in d),
-                "workouts": sum(1 for d in data_by_day.values() if "workout_type" in d),
+                "workouts": len(workout_dates),
+                "workout_sessions": workouts_imported,
             },
         }
 
@@ -512,6 +673,44 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
     target_weight_kg = goals.get("target_weight_kg")
 
     daily = get_daily_metrics(days, user_id=user["id"])
+    
+    # Get workouts for the date range
+    if daily:
+        start_date = daily[0]["date"]
+        end_date = daily[-1]["date"]
+        workouts_by_date = get_workouts_for_date_range(start_date, end_date, user_id=user["id"])
+    else:
+        workouts_by_date = {}
+
+    # Build weight lookup for extrapolation
+    # Collect all known weights with their dates
+    known_weights = {}
+    for day in daily:
+        if day.get("weight_kg") is not None:
+            known_weights[day["date"]] = day["weight_kg"]
+    
+    def get_extrapolated_weight(date: str) -> float | None:
+        """Get weight for a date, using extrapolation if missing.
+        
+        Strategy:
+        1. If weight exists for this date, use it
+        2. Otherwise, use the most recent known weight before this date (forward fill)
+        3. If no weight before, use the first known weight after (backward fill)
+        """
+        if date in known_weights:
+            return known_weights[date]
+        
+        # Find most recent weight before this date
+        for known_date in sorted(known_weights.keys(), reverse=True):
+            if known_date < date:
+                return known_weights[known_date]
+        
+        # Find first weight after this date (backward fill)
+        for known_date in sorted(known_weights.keys()):
+            if known_date > date:
+                return known_weights[known_date]
+        
+        return None
 
     daily_breakdown = []
     deficits = []
@@ -522,7 +721,18 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
         steps = day.get("steps")
         calories = day.get("calories_kcal")
 
+        # Use extrapolated weight if missing
+        if weight is None:
+            weight = get_extrapolated_weight(day["date"])
+            if weight is not None:
+                entry["weight_extrapolated"] = True
+            else:
+                entry["weight_extrapolated"] = False
+        else:
+            entry["weight_extrapolated"] = False
+
         if weight is not None:
+            entry["weight_kg"] = round(weight, 1)
             bmr = _calc_bmr(weight, height_cm, age, sex)
             neat = bmr * 0.12
             entry["bmr"] = round(bmr)
@@ -538,6 +748,18 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
             entry["walking_calories"] = round(walking)
             entry["distance_km"] = round(distance_km, 2)
 
+            # Workout calories for this day
+            workout_calories = 0.0
+            day_workouts = workouts_by_date.get(day["date"], [])
+            if day_workouts:
+                # Sum calories from all workouts for this day
+                workout_calories = sum(w.get("calories_burned") or 0 for w in day_workouts)
+                entry["workouts"] = day_workouts
+                entry["workout_calories"] = round(workout_calories) if workout_calories > 0 else None
+            else:
+                entry["workouts"] = []
+                entry["workout_calories"] = None
+
             # TEF — use actual food intake if available, else estimate from BMR
             if calories is not None:
                 tef = 0.1 * calories
@@ -545,8 +767,8 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
                 tef = 0.1 * bmr
             entry["tef"] = round(tef)
 
-            # TDEE = BMR + Walking + TEF + NEAT
-            tdee = bmr + walking + tef + neat
+            # TDEE = BMR + Walking + Workout Calories + TEF + NEAT
+            tdee = bmr + walking + workout_calories + tef + neat
             entry["tdee"] = round(tdee)
 
             # Always include calories_consumed (null if missing) for chart consistency

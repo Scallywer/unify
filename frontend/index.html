@@ -197,6 +197,22 @@
 
   .workouts-table tr:last-child td { border-bottom: none; }
 
+  .workouts-table .workout-day-start td {
+    border-top: 2px solid var(--border);
+    padding-top: 14px;
+  }
+
+  .workouts-table .workout-total {
+    background: var(--surface2);
+    font-weight: 600;
+  }
+
+  .workouts-table .workout-total td {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    border-top: 1px solid var(--border);
+  }
+
   .empty-state {
     text-align: center;
     padding: 40px 20px;
@@ -1203,6 +1219,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (m.sleep) parts.push(`${m.sleep}d sleep`);
           if (m.heart_rate) parts.push(`${m.heart_rate}d HR`);
           if (m.workouts) parts.push(`${m.workouts}d workouts`);
+          if (m.workout_sessions) parts.push(`${m.workout_sessions} sessions`);
           html += `Metrics: ${parts.join(', ')}`;
         }
         importResult.innerHTML = html;
@@ -1626,6 +1643,7 @@ function updateTdeeChart(deficitData) {
                 ``,
                 `BMR: ${d.bmr || '--'} kcal`,
                 `Walking: ${d.walking_calories || 0} kcal (${d.distance_km || 0} km)`,
+                `Workouts: ${d.workout_calories || 0} kcal`,
                 `TEF: ${d.tef || 0} kcal`,
                 `NEAT: ${d.neat || 0} kcal`,
               ];
@@ -1744,16 +1762,49 @@ function updateWorkouts(workouts) {
   }
 
   let html = `<table class="workouts-table">
-    <thead><tr><th>Date</th><th>Type</th><th>Duration</th></tr></thead><tbody>`;
+    <thead><tr><th>Date</th><th>Type</th><th>Duration</th><th>Calories</th></tr></thead><tbody>`;
 
-  workouts.forEach(w => {
-    const dur = w.workout_duration_min != null ? `${w.workout_duration_min} min` : '--';
-    const type = w.workout_type || 'Unknown';
-    html += `<tr>
-      <td>${formatDate(w.date)}</td>
-      <td><span class="badge">${type}</span></td>
-      <td>${dur}</td>
-    </tr>`;
+  workouts.forEach(dayEntry => {
+    const date = dayEntry.date;
+    const dayWorkouts = dayEntry.workouts || [];
+    const totalDuration = dayEntry.total_duration_min || 0;
+    const totalCalories = dayEntry.total_calories_burned;
+    
+    if (dayWorkouts.length === 0) {
+      // Fallback for old format
+      const dur = dayEntry.workout_duration_min != null ? `${dayEntry.workout_duration_min} min` : '--';
+      const type = dayEntry.workout_type || 'Unknown';
+      html += `<tr>
+        <td>${formatDate(date)}</td>
+        <td><span class="badge">${type}</span></td>
+        <td>${dur}</td>
+        <td>--</td>
+      </tr>`;
+    } else {
+      // Show each workout type in its own row
+      dayWorkouts.forEach((workout, idx) => {
+        const dur = workout.workout_duration_min != null ? `${workout.workout_duration_min} min` : '--';
+        const type = workout.workout_type || 'Unknown';
+        const cals = workout.calories_burned != null ? `${workout.calories_burned} kcal` : '--';
+        const rowClass = idx === 0 ? 'workout-day-start' : '';
+        html += `<tr class="${rowClass}">
+          <td>${idx === 0 ? formatDate(date) : ''}</td>
+          <td><span class="badge">${type}</span></td>
+          <td>${dur}</td>
+          <td>${cals}</td>
+        </tr>`;
+      });
+      
+      // Add total row if multiple workouts
+      if (dayWorkouts.length > 1) {
+        html += `<tr class="workout-total">
+          <td></td>
+          <td><strong>Total</strong></td>
+          <td><strong>${totalDuration} min</strong></td>
+          <td><strong>${totalCalories != null ? totalCalories + ' kcal' : '--'}</strong></td>
+        </tr>`;
+      }
+    }
   });
 
   html += '</tbody></table>';

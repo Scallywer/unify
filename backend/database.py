@@ -73,6 +73,22 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON metrics(date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON metrics(user_id)")
 
+        # Workouts table for individual workout sessions
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS workouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                workout_type TEXT NOT NULL,
+                duration_min INTEGER NOT NULL,
+                calories_burned INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_workouts_date ON workouts(date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_workouts_user_id ON workouts(user_id)")
+
         conn.commit()
 
 
@@ -198,20 +214,86 @@ def get_daily_metrics(days: int = 30, *, user_id: int):
         return [dict(row) for row in rows]
 
 
-def get_workouts(days: int = 7, *, user_id: int):
-    """Return recent workout entries."""
+def insert_workout(user_id: int, date: str, workout_type: str, duration_min: int, calories_burned: int = None):
+    """Insert a workout into the workouts table."""
     with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO workouts (user_id, date, workout_type, duration_min, calories_burned)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, date, workout_type, duration_min, calories_burned),
+        )
+        conn.commit()
+
+
+def get_workouts(days: int = 7, *, user_id: int):
+    """Return recent workout entries grouped by date with totals."""
+    with get_connection() as conn:
+        # Get all individual workouts
         rows = conn.execute(
             """
-            SELECT date, workout_type, workout_duration_min
-            FROM metrics
-            WHERE user_id = :user_id AND workout_type IS NOT NULL
-              AND date >= date('now', :offset)
-            ORDER BY date DESC
+            SELECT date, workout_type, duration_min, calories_burned
+            FROM workouts
+            WHERE user_id = :user_id AND date >= date('now', :offset)
+            ORDER BY date DESC, workout_type ASC
             """,
             {"user_id": user_id, "offset": f"-{days} days"},
         ).fetchall()
-        return [dict(row) for row in rows]
+        
+        # Group by date
+        workouts_by_date = {}
+        for row in rows:
+            date = row[0]
+            if date not in workouts_by_date:
+                workouts_by_date[date] = []
+            workouts_by_date[date].append({
+                "workout_type": row[1],
+                "workout_duration_min": row[2],
+                "calories_burned": row[3],
+            })
+        
+        # Format as list with totals
+        result = []
+        for date in sorted(workouts_by_date.keys(), reverse=True):
+            workouts = workouts_by_date[date]
+            total_duration = sum(w["workout_duration_min"] for w in workouts)
+            total_calories = sum(w["calories_burned"] or 0 for w in workouts)
+            result.append({
+                "date": date,
+                "workouts": workouts,
+                "total_duration_min": total_duration,
+                "total_calories_burned": total_calories if total_calories > 0 else None,
+            })
+        
+        return result
+
+
+def get_workouts_for_date_range(start_date: str, end_date: str, *, user_id: int):
+    """Get all workouts for a date range, grouped by date."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT date, workout_type, duration_min, calories_burned
+            FROM workouts
+            WHERE user_id = :user_id AND date >= :start_date AND date <= :end_date
+            ORDER BY date ASC, workout_type ASC
+            """,
+            {"user_id": user_id, "start_date": start_date, "end_date": end_date},
+        ).fetchall()
+        
+        workouts_by_date = {}
+        for row in rows:
+            date = row[0]
+            if date not in workouts_by_date:
+                workouts_by_date[date] = []
+            workouts_by_date[date].append({
+                "workout_type": row[1],
+                "duration_min": row[2],
+                "calories_burned": row[3],
+            })
+        
+        return workouts_by_date
 
 
 def get_dates_with_data(user_id: int) -> list[str]:

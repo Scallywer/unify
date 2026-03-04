@@ -1379,8 +1379,10 @@ function updateCards(daily, deficitData, period) {
     const latestDef = deficitData.daily[deficitData.daily.length - 1];
     if (latestDef.deficit != null) {
       const d = latestDef.deficit;
-      // Don't show + sign for deficits - just show the number
-      document.getElementById('card-deficit').textContent = d.toLocaleString();
+      // Deficit shows with minus, surplus with plus
+      const sign = d >= 0 ? '-' : '+';
+      const absValue = Math.abs(d);
+      document.getElementById('card-deficit').textContent = sign + absValue.toLocaleString();
       const el = document.getElementById('card-deficit-sub');
       const detail = `TDEE ${latestDef.tdee} \u2022 ${latestDef.distance_km || 0} km`;
       if (d > 0) {
@@ -1666,11 +1668,11 @@ function updateTdeeChart(deficitData) {
               
               if (d.deficit != null) {
                 const def = d.deficit;
-                // Show deficit without + sign, surplus with - sign
+                // Deficit shows with minus, surplus with plus
                 if (def >= 0) {
-                  lines.push(``, `Balance: ${def} kcal deficit`);
+                  lines.push(``, `Balance: -${def} kcal deficit`);
                 } else {
-                  lines.push(``, `Balance: ${Math.abs(def)} kcal surplus`);
+                  lines.push(``, `Balance: +${Math.abs(def)} kcal surplus`);
                 }
               } else if (d.calories_consumed != null && d.calories_incomplete === true) {
                 lines.push(``, `Balance: Not calculated (incomplete data)`);
@@ -1757,11 +1759,11 @@ function updateDeficitChart(deficitData) {
           callbacks: {
             label: function(item) {
               const v = item.raw;
-              // Show deficit without + sign, surplus with - sign
+              // Deficit shows with minus, surplus with plus
               if (v >= 0) {
-                return `${v} kcal deficit`;
+                return `-${v} kcal deficit`;
               } else {
-                return `${Math.abs(v)} kcal surplus`;
+                return `+${Math.abs(v)} kcal surplus`;
               }
             }
           }

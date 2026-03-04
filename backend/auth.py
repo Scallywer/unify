@@ -1,4 +1,5 @@
 import os
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
@@ -19,12 +20,21 @@ ACCESS_TOKEN_EXPIRE_DAYS = 30
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+def _prep_password(password: str) -> bytes:
+    """Pre-hash password with SHA-256 to handle bcrypt's 72-byte limit."""
+    return hashlib.sha256(password.encode('utf-8')).digest()
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    # Pre-hash to handle passwords longer than 72 bytes
+    prepped = _prep_password(password)
+    return pwd_context.hash(prepped)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    # Pre-hash to match what hash_password does
+    prepped = _prep_password(plain)
+    return pwd_context.verify(prepped, hashed)
 
 
 # ── JWT helpers ───────────────────────────────────────────────

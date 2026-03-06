@@ -16,6 +16,8 @@ DEFAULT_PROFILE = {
     "height_cm": 175,
     "age": 30,
     "sex": "male",
+    "weight_kg": None,
+    "use_profile_weight": False,
 }
 
 

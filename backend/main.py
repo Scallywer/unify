@@ -230,7 +230,7 @@ async def set_profile(request: Request, user: dict = Depends(get_current_user)):
     """Update profile measurements. Accepts partial updates."""
     body = await request.json()
     profile = get_user_profile(user["id"])
-    for key in ("height_cm", "age", "sex"):
+    for key in ("height_cm", "age", "sex", "weight_kg", "use_profile_weight"):
         if key in body:
             profile[key] = body[key]
     set_user_profile(user["id"], profile)
@@ -577,9 +577,16 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
     age = profile.get("age", 30)
     sex = profile.get("sex", "male")
     target_weight_kg = goals.get("target_weight_kg")
+    use_profile_weight = profile.get("use_profile_weight", False)
+    profile_weight_kg = profile.get("weight_kg")
 
     daily = get_daily_metrics(days, user_id=user["id"])
-    
+
+    # When use_profile_weight, ignore imported weight and use profile weight for all days
+    if use_profile_weight and profile_weight_kg is not None:
+        for day in daily:
+            day["weight_kg"] = profile_weight_kg
+
     # Get workouts for the date range
     if daily:
         start_date = daily[0]["date"]
@@ -716,10 +723,13 @@ def get_deficit(days: int = Query(default=30, ge=1, le=365), user: dict = Depend
         # Time to target
         if target_weight_kg is not None:
             latest_weight = None
-            for day in reversed(daily):
-                if day.get("weight_kg") is not None:
-                    latest_weight = day["weight_kg"]
-                    break
+            if use_profile_weight and profile_weight_kg is not None:
+                latest_weight = profile_weight_kg
+            else:
+                for day in reversed(daily):
+                    if day.get("weight_kg") is not None:
+                        latest_weight = day["weight_kg"]
+                        break
 
             if latest_weight is not None:
                 kg_to_lose = latest_weight - target_weight_kg
